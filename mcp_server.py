@@ -28,6 +28,9 @@ import sys
 import hashlib
 import secrets
 import argparse
+import subprocess
+import hmac
+import threading
 from collections import Counter
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
@@ -40,10 +43,12 @@ DEFAULT_PODS_DIR = os.environ.get("IOS_PODS_DIR", os.getcwd())
 CACHE_DIR = os.environ.get("IOS_PODS_CACHE_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache"))
 KEYS_FILE = os.environ.get("IOS_PODS_KEYS_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".api-keys"))
 MIXUP_MARKER = os.environ.get("IOS_PODS_MIXUP_MARKER", "SUPPORT_MIXUP")
+WEBHOOK_SECRET = os.environ.get("IOS_PODS_WEBHOOK_SECRET", "")
 
 # 运行时赋值
 PODS_DIR = DEFAULT_PODS_DIR
 INDEX: dict = {}
+INDEX_LOCK = threading.Lock()
 
 mcp = FastMCP("ios-components", instructions="""iOS CocoaPods component library code index.
 Search existing APIs before writing code — reuse, don't reinvent.
@@ -632,6 +637,47 @@ def find_usage_example(component_name: str) -> str:
 
 
 # ============================================================
+# Webhook & 热更新
+# ============================================================
+
+def reindex():
+    """重新拉取代码并重建索引"""
+    global INDEX
+    print("[mcp-ios] 🔄 webhook 触发重建索引...", file=sys.stderr)
+
+    # git pull（如果 PODS_DIR 是 git 仓库）
+    git_dir = os.path.join(PODS_DIR, ".git")
+    if os.path.isdir(git_dir):
+        try:
+            result = subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=PODS_DIR, capture_output=True, text=True, timeout=120,
+            )
+            print(f"[mcp-ios] git pull: {result.stdout.strip()}", file=sys.stderr)
+            if result.returncode != 0:
+                print(f"[mcp-ios] git pull stderr: {result.stderr.strip()}", file=sys.stderr)
+        except Exception as e:
+            print(f"[mcp-ios] git pull 失败: {e}", file=sys.stderr)
+
+    # 删除缓存强制重建
+    cache_path = os.path.join(CACHE_DIR, "index.json")
+    if os.path.exists(cache_path):
+        os.remove(cache_path)
+
+    new_index = build_index(PODS_DIR)
+    with INDEX_LOCK:
+        INDEX = new_index
+    print(f"[mcp-ios] ✅ 索引已更新 ({len(new_index)} 个组件)", file=sys.stderr)
+
+
+def verify_gitlab_signature(body: bytes, signature: str) -> bool:
+    """验证 GitLab webhook X-Gitlab-Token"""
+    if not WEBHOOK_SECRET:
+        return True  # 未配置 secret 则跳过验证
+    return hmac.compare_digest(signature, WEBHOOK_SECRET)
+
+
+# ============================================================
 # 启动
 # ============================================================
 
@@ -646,6 +692,7 @@ def main():
     parser.add_argument("--api-keys", help="API Keys（逗号分隔）")
     parser.add_argument("--gen-key", metavar="NAME", help="生成新 API Key")
     parser.add_argument("--list-keys", action="store_true", help="列出已注册 API Keys")
+    parser.add_argument("--webhook-secret", help="GitLab Webhook Secret Token")
 
     args = parser.parse_args()
     PODS_DIR = args.pods_dir
@@ -671,18 +718,65 @@ def main():
 
     if args.api_keys:
         os.environ["MCP_API_KEYS"] = args.api_keys
+    if args.webhook_secret:
+        global WEBHOOK_SECRET
+        WEBHOOK_SECRET = args.webhook_secret
 
     # 构建索引
     INDEX = build_index(PODS_DIR)
 
     if args.http:
         import uvicorn
+        from starlette.applications import Starlette
         from starlette.responses import JSONResponse
+        from starlette.routing import Route, Mount
+        from starlette.requests import Request
 
         valid_keys = load_api_keys()
         mcp_app = mcp.streamable_http_app()
 
-        async def auth_app(scope, receive, send):
+        async def webhook_gitlab(request: Request):
+            """GitLab webhook: push 事件触发重新拉取 & 重建索引"""
+            # 验证 token
+            token = request.headers.get("X-Gitlab-Token", "")
+            if not verify_gitlab_signature(b"", token):
+                return JSONResponse({"error": "Forbidden"}, status_code=403)
+
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+            event = request.headers.get("X-Gitlab-Event", "")
+            object_kind = body.get("object_kind", "")
+
+            # 只处理 push 事件
+            if event != "Push Hook" and object_kind != "push":
+                return JSONResponse({"message": f"Ignored event: {event or object_kind}"})
+
+            ref = body.get("ref", "")
+            project = body.get("project", {}).get("name", "unknown")
+            commits = len(body.get("commits", []))
+            print(f"[mcp-ios] 📦 GitLab push: {project} ({ref}), {commits} commit(s)", file=sys.stderr)
+
+            # 后台线程执行重建，避免阻塞 webhook 响应
+            threading.Thread(target=reindex, daemon=True).start()
+
+            return JSONResponse({
+                "message": "Reindex triggered",
+                "project": project,
+                "ref": ref,
+                "commits": commits,
+            })
+
+        async def webhook_health(request: Request):
+            """Webhook 健康检查"""
+            with INDEX_LOCK:
+                count = len(INDEX)
+            return JSONResponse({"status": "ok", "components": count})
+
+        async def auth_mcp_app(scope, receive, send):
+            """MCP ASGI app with API Key auth"""
             if scope["type"] == "http":
                 headers = dict(scope.get("headers", []))
                 auth_value = headers.get(b"authorization", b"").decode()
@@ -697,11 +791,19 @@ def main():
                     return
             await mcp_app(scope, receive, send)
 
+        app = Starlette(routes=[
+            Route("/webhook/gitlab", webhook_gitlab, methods=["POST"]),
+            Route("/webhook/health", webhook_health, methods=["GET"]),
+            Mount("/", app=auth_mcp_app),
+        ])
+
         print(f"🚀 iOS Components MCP Server (HTTP)")
         print(f"   地址: http://{args.host}:{args.port}")
         print(f"   鉴权: {'✅ 已启用' if valid_keys else '⚠️ 未配置'}")
+        print(f"   Webhook: http://{args.host}:{args.port}/webhook/gitlab")
+        print(f"   Webhook Secret: {'✅ 已配置' if WEBHOOK_SECRET else '⚠️ 未配置'}")
         print(f"   组件: {len(INDEX)} 个")
-        uvicorn.run(auth_app, host=args.host, port=args.port)
+        uvicorn.run(app, host=args.host, port=args.port)
     else:
         mcp.run(transport="stdio")
 
