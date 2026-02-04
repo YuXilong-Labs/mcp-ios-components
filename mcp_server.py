@@ -999,6 +999,7 @@ def main():
 
     if args.http:
         import uvicorn
+        from contextlib import asynccontextmanager
         from starlette.applications import Starlette
         from starlette.responses import JSONResponse
         from starlette.routing import Route, Mount
@@ -1006,6 +1007,12 @@ def main():
 
         valid_keys = load_api_keys()
         mcp_app = mcp.streamable_http_app()
+
+        @asynccontextmanager
+        async def lifespan(app):
+            """Initialize MCP session manager task group"""
+            async with mcp_app.router.lifespan_context(app):
+                yield
 
         async def webhook_gitlab(request: Request):
             """GitLab webhook: push 事件触发重新拉取 & 重建索引"""
@@ -1063,11 +1070,14 @@ def main():
                     return
             await mcp_app(scope, receive, send)
 
-        app = Starlette(routes=[
-            Route("/webhook/gitlab", webhook_gitlab, methods=["POST"]),
-            Route("/webhook/health", webhook_health, methods=["GET"]),
-            Mount("/", app=auth_mcp_app),
-        ])
+        app = Starlette(
+            routes=[
+                Route("/webhook/gitlab", webhook_gitlab, methods=["POST"]),
+                Route("/webhook/health", webhook_health, methods=["GET"]),
+                Mount("/", app=auth_mcp_app),
+            ],
+            lifespan=lifespan,
+        )
 
         print(f"🚀 iOS Components MCP Server (HTTP)")
         print(f"   地址: http://{args.host}:{args.port}")
