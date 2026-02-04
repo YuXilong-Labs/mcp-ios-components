@@ -1,0 +1,105 @@
+# AGENTS.md — iOS 项目 AI 编码规范
+
+> 将此文件放到项目根目录，Claude Code 会自动读取并遵循。
+
+## 🎯 核心原则：复用优先
+
+**在写任何代码之前，先检查组件库是否已有现成实现。**
+
+重复造轮子 = 浪费时间 + 增加维护成本 + Code Review 被打回
+
+---
+
+## ⚠️ 强制规则
+
+### 实现以下功能前，必须先调用 `search_component`：
+
+| 功能类型 | 搜索关键词示例 |
+|---------|---------------|
+| 图片处理 | 圆角、缩放、裁剪、滤镜、缓存、下载、UIImage |
+| 网络请求 | 网络、请求、HTTP、upload、download、WebSocket |
+| UI 组件 | 弹窗、Toast、alert、刷新、refresh、空态、empty、骨架屏 |
+| 数据存储 | 缓存、cache、数据库、database、Keychain、UserDefaults |
+| 工具方法 | 日期、date、字符串、string、加密、encrypt、JSON、日志 |
+| 基础扩展 | UIView、UIButton、UILabel、NSString、NSArray、NSDictionary |
+
+### 搜索策略
+
+1. **先中文后英文**：`search_component("圆角")` → `search_component("corner")`
+2. **尝试类名**：`search_component("UIImage")` 找所有 UIImage 相关扩展
+3. **尝试同义词**：缓存 → cache → store → persist
+
+### 标准工作流
+
+```
+用户需求 → 识别涉及的功能类型 →
+search_component(关键词) → 发现候选组件 →
+get_component_api(组件名) → 查看 API →
+get_class_detail(组件名, 类名) → 查看具体实现 →
+确认可复用 → 告诉用户直接使用
+```
+
+---
+
+## ✅ 正确示范
+
+**用户**：给头像加个圆角
+
+**你应该**：
+1. 调用 `search_component("圆角")` 或 `search_component("UIImage corner")`
+2. 发现 `UIImage+CornerRadius` 分类
+3. 回复：
+   > 组件库已有圆角方法，直接用：
+   > ```objc
+   > UIImage *rounded = [image xx_imageWithCornerRadius:8];
+   > ```
+
+---
+
+## ❌ 禁止行为
+
+- ❌ 未搜索就直接写 `UIGraphicsBeginImageContext` 画圆角
+- ❌ 自己封装 `AFNetworking` 而不检查现有网络组件
+- ❌ 复制 Stack Overflow 代码而不查组件库
+- ❌ 用户说"写一个 XX"就直接写，不先检查是否已有
+
+---
+
+## 🏆 优先级规则
+
+搜索到多个实现时，按以下顺序推荐：
+
+1. **Category/Extension** (如 `UIImage+XX`) — 最推荐，调用最自然
+2. **Protocol/基类方法** — 统一接口，便于替换
+3. **Helper/Utility 类** — 仅当无分类方法时使用
+
+---
+
+## 📋 项目特定组件
+
+<!-- 在这里列出本项目常用的核心组件，帮助 AI 快速定位 -->
+
+| 组件名 | 用途 | 常用类/方法 |
+|-------|------|------------|
+| XXNetwork | 网络请求 | `XXHTTPClient`, `XXRequest` |
+| XXImageKit | 图片处理 | `UIImage+XX`, `XXImageCache` |
+| XXUIKit | UI 组件 | `XXToast`, `XXAlertView` |
+| XXFoundation | 基础扩展 | `NSString+XX`, `NSDate+XX` |
+
+<!-- 根据实际组件库修改上表 -->
+
+---
+
+## 🔧 MCP 工具速查
+
+| 工具 | 用途 |
+|------|------|
+| `search_component(keyword)` | 搜索符号/注释，找组件 |
+| `get_component_api(name)` | 查看组件完整 API |
+| `get_class_detail(comp, class)` | 查看类的属性和方法 |
+| `read_source(comp, file, start, end)` | 读取源码片段 |
+| `find_usage_example(name)` | 查找使用示例 |
+
+---
+
+*此文件由 mcp-ios-components 提供，根据项目需要自定义。*
