@@ -50,16 +50,47 @@ PODS_DIR = DEFAULT_PODS_DIR
 INDEX: dict = {}
 INDEX_LOCK = threading.Lock()
 
-mcp = FastMCP("ios-components", instructions="""iOS CocoaPods component library code index.
-Search existing APIs before writing code — reuse, don't reinvent.
-Typical flow: search_component → get_class_detail → read_source.
-Use find_usage_example to see how components are used across the codebase.
+mcp = FastMCP("ios-components", instructions="""iOS 组件库代码索引 — 复用优先，拒绝重复造轮子。
 
-【Priority Rules】
-When multiple methods are found, prefer in this order:
-1. Category/Extension methods (e.g. UIButton+Extension) — most natural, closest to native API
-2. Protocol/Base class methods
-3. Helper/Utility classes — lowest priority, use only when no category method exists""")
+⚠️ 【强制检查规则】
+实现以下功能前，必须先调用 search_component 检查现有组件：
+- 图片处理（缩放、裁剪、圆角、滤镜、缓存、下载）
+- 网络请求（HTTP、WebSocket、上传、下载）
+- UI 组件（弹窗、Toast、刷新、空态、骨架屏）
+- 数据存储（缓存、数据库、文件、Keychain）
+- 工具类（日期、字符串、加密、JSON、日志）
+- 基础扩展（UIView、UIImage、NSString、NSArray 等分类）
+
+🔍 【搜索策略】
+1. 先用中文关键词搜：search_component("图片圆角")
+2. 再用英文/类名搜：search_component("corner radius") 或 search_component("UIImage")
+3. 搜索结果为空不代表没有，尝试同义词：缓存→cache→store→persist
+
+📋 【标准工作流】
+search_component(关键词) → 发现候选组件 →
+get_component_api(组件名) → 查看完整 API →
+get_class_detail(组件名, 类名) → 查看具体类 →
+read_source(组件名, 文件, 起始行, 结束行) → 查看实现细节
+
+💡 【使用示例查找】
+find_usage_example(组件名) — 查看其他组件如何 import 和使用，学习最佳实践
+
+🎯 【优先级规则】
+搜索到多个方法时，按以下顺序选择：
+1. Category/Extension 方法（如 UIButton+XX）— 最自然，接近原生 API
+2. Protocol/基类方法 — 统一接口
+3. Helper/Utility 类 — 最后选择，仅当无分类方法时使用
+
+❌ 【禁止行为】
+- 未搜索就直接写 UIImage 圆角、缩放等常见功能
+- 自己写网络请求封装而不检查现有网络组件
+- 复制粘贴 Stack Overflow 代码而不查组件库
+
+✅ 【正确示范】
+用户说"给图片加圆角" →
+你先调用 search_component("圆角") 或 search_component("UIImage corner") →
+发现 UIImage+CornerRadius 分类 →
+告诉用户直接用：[image xx_imageWithCornerRadius:8]""")
 
 
 # ============================================================
@@ -384,10 +415,18 @@ def list_components() -> str:
 @mcp.tool()
 def search_component(keyword: str, kind: str = "") -> str:
     """搜索组件中的符号（类名、方法名、属性名、注释等，模糊匹配）。
+    
+    ⚠️ 实现 UI/网络/图片/工具类功能前必须先调用此工具！
 
     Args:
-        keyword: 搜索关键词（不区分大小写）
+        keyword: 搜索关键词（不区分大小写）。建议尝试：
+                 - 中文：圆角、缓存、弹窗、网络请求、日期格式化
+                 - 英文：corner、cache、toast、request、dateFormat
+                 - 类名：UIImage、UIButton、NSString
         kind: 可选过滤，值: interface/protocol/method/property/func/class/struct/enum/var
+    
+    Returns:
+        匹配的 API 列表，包含组件名、文件、行号，可直接用于 read_source
     """
     if not INDEX:
         return "暂无索引数据。"
