@@ -43,6 +43,16 @@ claude mcp list
 # ios-components: ... ✓ Connected
 ```
 
+## 强化组件复用（推荐）
+
+将 `AGENTS.md.template` 复制到你的 iOS 项目根目录：
+
+```bash
+cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.md
+```
+
+然后编辑 `AGENTS.md`，填写项目特定的组件表。Claude Code 会自动读取并遵循规则，在实现功能前先检查组件库。
+
 ## 工具列表
 
 | 工具 | 说明 |
@@ -152,6 +162,16 @@ Verify:
 claude mcp list
 # ios-components: ... ✓ Connected
 ```
+
+## Enforce Component Reuse (Recommended)
+
+Copy `AGENTS.md.template` to your iOS project root:
+
+```bash
+cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.md
+```
+
+Edit `AGENTS.md` to fill in your project-specific component table. Claude Code will automatically follow the rules and check the component library before implementing features.
 
 ## Tools
 
