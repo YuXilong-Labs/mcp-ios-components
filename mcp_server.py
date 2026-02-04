@@ -44,11 +44,15 @@ CACHE_DIR = os.environ.get("IOS_PODS_CACHE_DIR", os.path.join(os.path.dirname(os
 KEYS_FILE = os.environ.get("IOS_PODS_KEYS_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".api-keys"))
 MIXUP_MARKER = os.environ.get("IOS_PODS_MIXUP_MARKER", "SUPPORT_MIXUP")
 WEBHOOK_SECRET = os.environ.get("IOS_PODS_WEBHOOK_SECRET", "")
+WATCH_INTERVAL = int(os.environ.get("IOS_PODS_WATCH_INTERVAL", "0"))  # 秒, 0=禁用
 
 # 运行时赋值
 PODS_DIR = DEFAULT_PODS_DIR
 INDEX: dict = {}
 INDEX_LOCK = threading.Lock()
+LAST_HASH: str = ""
+WATCH_LOG: list = []  # 最近的更新日志
+WATCH_LOG_MAX = 50
 
 mcp = FastMCP("ios-components", instructions="""iOS 组件库代码索引 — 复用优先，拒绝重复造轮子。
 
@@ -621,6 +625,70 @@ def read_source(component_name: str, file: str, start: int = 1, end: int = 0) ->
 
 
 @mcp.tool()
+def refresh_index() -> str:
+    """手动触发检查组件仓库更新并重建索引。当你怀疑组件有更新时调用。"""
+    result = check_for_updates()
+
+    lines = [f"🔄 检查完成 ({result['time']})"]
+
+    for repo in result["repos"]:
+        status = "✅ 已更新" if repo["updated"] else ("⚠️ " + repo["error"] if repo["error"] else "➖ 无变更")
+        changes = f" ({repo['changes']} 文件)" if repo["changes"] else ""
+        lines.append(f"  {repo['name']}: {status}{changes}")
+
+    if result["reindexed"]:
+        with INDEX_LOCK:
+            count = len(INDEX)
+        lines.append(f"\n✅ 索引已重建（{count} 个组件）")
+    else:
+        lines.append("\nℹ️ 索引无需更新")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def watch_status() -> str:
+    """查看定时检查状态和最近的更新日志。"""
+    lines = []
+
+    # 定时检查状态
+    if WATCH_INTERVAL > 0:
+        lines.append(f"🔄 定时检查: 每 {WATCH_INTERVAL} 秒")
+    else:
+        lines.append("⏸️ 定时检查: 未启用")
+
+    # Git 仓库
+    repos = discover_git_repos(PODS_DIR)
+    lines.append(f"📦 监控仓库: {len(repos)} 个")
+    for repo in repos:
+        name = os.path.basename(repo) or "root"
+        lines.append(f"  - {name}")
+
+    # 索引状态
+    with INDEX_LOCK:
+        count = len(INDEX)
+    lines.append(f"\n📊 当前索引: {count} 个组件")
+
+    # 最近日志
+    if WATCH_LOG:
+        lines.append(f"\n📋 最近 {min(len(WATCH_LOG), 10)} 条更新日志:")
+        for entry in WATCH_LOG[-10:]:
+            updated_repos = [r["name"] for r in entry["repos"] if r["updated"]]
+            if updated_repos:
+                lines.append(f"  {entry['time']} — ✅ 更新: {', '.join(updated_repos)}")
+            else:
+                errors = [r["name"] for r in entry["repos"] if r["error"]]
+                if errors:
+                    lines.append(f"  {entry['time']} — ⚠️ 错误: {', '.join(errors)}")
+                else:
+                    lines.append(f"  {entry['time']} — ➖ 无变更")
+    else:
+        lines.append("\n📋 暂无更新日志")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def find_usage_example(component_name: str) -> str:
     """在其他组件中搜索该组件的使用示例（import/引用），帮助理解组件用法。
 
@@ -681,7 +749,7 @@ def find_usage_example(component_name: str) -> str:
 
 def reindex():
     """重新拉取代码并重建索引"""
-    global INDEX
+    global INDEX, LAST_HASH
     print("[mcp-ios] 🔄 webhook 触发重建索引...", file=sys.stderr)
 
     # git pull（如果 PODS_DIR 是 git 仓库）
@@ -706,7 +774,160 @@ def reindex():
     new_index = build_index(PODS_DIR)
     with INDEX_LOCK:
         INDEX = new_index
+    components = discover_components(PODS_DIR)
+    LAST_HASH = compute_hash(PODS_DIR, components)
     print(f"[mcp-ios] ✅ 索引已更新 ({len(new_index)} 个组件)", file=sys.stderr)
+
+
+# ============================================================
+# 定时检查 & 多仓库更新
+# ============================================================
+
+def discover_git_repos(pods_dir: str) -> list:
+    """发现 pods_dir 下的所有 git 仓库（包括根目录和子目录）"""
+    repos = []
+    # 检查根目录
+    if os.path.isdir(os.path.join(pods_dir, ".git")):
+        repos.append(pods_dir)
+    # 检查一级子目录（每个组件可能是独立仓库）
+    try:
+        for entry in os.listdir(pods_dir):
+            entry_path = os.path.join(pods_dir, entry)
+            if os.path.isdir(entry_path) and os.path.isdir(os.path.join(entry_path, ".git")):
+                repos.append(entry_path)
+    except OSError:
+        pass
+    return repos
+
+
+def git_pull_repo(repo_path: str) -> dict:
+    """对单个仓库执行 git fetch + diff 检查 + pull"""
+    result = {"path": repo_path, "updated": False, "changes": [], "error": None}
+    repo_name = os.path.basename(repo_path) or "root"
+
+    try:
+        # fetch 远程
+        fetch = subprocess.run(
+            ["git", "fetch", "--quiet"],
+            cwd=repo_path, capture_output=True, text=True, timeout=60,
+        )
+        if fetch.returncode != 0:
+            result["error"] = f"fetch failed: {fetch.stderr.strip()}"
+            return result
+
+        # 检查当前分支
+        branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=repo_path, capture_output=True, text=True, timeout=10,
+        )
+        current_branch = branch.stdout.strip() or "main"
+
+        # 比较本地和远程
+        diff_stat = subprocess.run(
+            ["git", "diff", "--stat", f"HEAD..origin/{current_branch}"],
+            cwd=repo_path, capture_output=True, text=True, timeout=30,
+        )
+        diff_output = diff_stat.stdout.strip()
+
+        if not diff_output:
+            return result  # 无更新
+
+        # 有更新，拉取
+        pull = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            cwd=repo_path, capture_output=True, text=True, timeout=120,
+        )
+        if pull.returncode != 0:
+            result["error"] = f"pull failed: {pull.stderr.strip()}"
+            return result
+
+        result["updated"] = True
+        # 解析变更文件
+        for line in diff_output.split('\n'):
+            line = line.strip()
+            if line and '|' in line:
+                filename = line.split('|')[0].strip()
+                result["changes"].append(filename)
+
+        print(f"[mcp-ios] ✅ {repo_name}: {len(result['changes'])} 文件更新", file=sys.stderr)
+
+    except subprocess.TimeoutExpired:
+        result["error"] = "timeout"
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
+def check_for_updates() -> dict:
+    """检查所有仓库更新，有变更则重建索引"""
+    global INDEX, LAST_HASH, WATCH_LOG
+
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = {"time": timestamp, "repos": [], "reindexed": False}
+
+    repos = discover_git_repos(PODS_DIR)
+    any_updated = False
+
+    for repo in repos:
+        result = git_pull_repo(repo)
+        repo_name = os.path.basename(result["path"]) or "root"
+        if result["error"]:
+            print(f"[mcp-ios] ⚠️ {repo_name}: {result['error']}", file=sys.stderr)
+        if result["updated"]:
+            any_updated = True
+        log_entry["repos"].append({
+            "name": repo_name,
+            "updated": result["updated"],
+            "changes": len(result["changes"]),
+            "error": result["error"],
+        })
+
+    # 即使 git 没有变更，也检查文件系统变更（有人可能直接修改文件）
+    if not any_updated:
+        components = discover_components(PODS_DIR)
+        current_hash = compute_hash(PODS_DIR, components)
+        if current_hash != LAST_HASH and LAST_HASH:
+            any_updated = True
+            print(f"[mcp-ios] 🔍 检测到文件系统变更", file=sys.stderr)
+
+    if any_updated:
+        # 删除缓存强制重建
+        cache_path = os.path.join(CACHE_DIR, "index.json")
+        if os.path.exists(cache_path):
+            os.remove(cache_path)
+
+        new_index = build_index(PODS_DIR)
+        with INDEX_LOCK:
+            INDEX = new_index
+        # 更新 hash
+        components = discover_components(PODS_DIR)
+        LAST_HASH = compute_hash(PODS_DIR, components)
+
+        log_entry["reindexed"] = True
+        print(f"[mcp-ios] ✅ 索引已更新 ({len(new_index)} 个组件)", file=sys.stderr)
+    else:
+        print(f"[mcp-ios] ℹ️ 无更新", file=sys.stderr)
+
+    # 记录日志
+    WATCH_LOG.append(log_entry)
+    if len(WATCH_LOG) > WATCH_LOG_MAX:
+        WATCH_LOG.pop(0)
+
+    return log_entry
+
+
+def watch_loop(interval: int):
+    """后台定时检查循环"""
+    import time
+    print(f"[mcp-ios] 🔄 定时检查已启动，间隔 {interval} 秒", file=sys.stderr)
+    while True:
+        time.sleep(interval)
+        try:
+            check_for_updates()
+        except Exception as e:
+            print(f"[mcp-ios] ❌ 定时检查异常: {e}", file=sys.stderr)
 
 
 def verify_gitlab_signature(body: bytes, signature: str) -> bool:
@@ -721,7 +942,7 @@ def verify_gitlab_signature(body: bytes, signature: str) -> bool:
 # ============================================================
 
 def main():
-    global PODS_DIR, INDEX
+    global PODS_DIR, INDEX, LAST_HASH, WATCH_INTERVAL, WEBHOOK_SECRET
 
     parser = argparse.ArgumentParser(description="iOS Components MCP Server")
     parser.add_argument("pods_dir", nargs="?", default=DEFAULT_PODS_DIR, help="组件库根目录")
@@ -732,6 +953,8 @@ def main():
     parser.add_argument("--gen-key", metavar="NAME", help="生成新 API Key")
     parser.add_argument("--list-keys", action="store_true", help="列出已注册 API Keys")
     parser.add_argument("--webhook-secret", help="GitLab Webhook Secret Token")
+    parser.add_argument("--watch", type=int, metavar="SECONDS", default=0,
+                        help="定时检查间隔（秒），如 --watch 300 表示每 5 分钟检查一次")
 
     args = parser.parse_args()
     PODS_DIR = args.pods_dir
@@ -758,11 +981,21 @@ def main():
     if args.api_keys:
         os.environ["MCP_API_KEYS"] = args.api_keys
     if args.webhook_secret:
-        global WEBHOOK_SECRET
         WEBHOOK_SECRET = args.webhook_secret
 
     # 构建索引
     INDEX = build_index(PODS_DIR)
+
+    # 记录初始 hash
+    components = discover_components(PODS_DIR)
+    LAST_HASH = compute_hash(PODS_DIR, components)
+
+    # 启动定时检查
+    watch_interval = args.watch or WATCH_INTERVAL
+    if watch_interval > 0:
+        WATCH_INTERVAL = watch_interval
+        watcher = threading.Thread(target=watch_loop, args=(watch_interval,), daemon=True)
+        watcher.start()
 
     if args.http:
         import uvicorn
@@ -841,6 +1074,8 @@ def main():
         print(f"   鉴权: {'✅ 已启用' if valid_keys else '⚠️ 未配置'}")
         print(f"   Webhook: http://{args.host}:{args.port}/webhook/gitlab")
         print(f"   Webhook Secret: {'✅ 已配置' if WEBHOOK_SECRET else '⚠️ 未配置'}")
+        print(f"   定时检查: {'每 ' + str(watch_interval) + ' 秒' if watch_interval > 0 else '未启用'}")
+        print(f"   Git 仓库: {len(discover_git_repos(PODS_DIR))} 个")
         print(f"   组件: {len(INDEX)} 个")
         uvicorn.run(app, host=args.host, port=args.port)
     else:

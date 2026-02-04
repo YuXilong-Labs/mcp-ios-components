@@ -63,6 +63,20 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
 | `get_class_detail(component_name, classname)` | 类视图：定义、属性、公开/内部方法 |
 | `read_source(component_name, file, start?, end?)` | 按行读取源码（支持模糊文件名） |
 | `find_usage_example(component_name)` | 搜索其他组件中的使用示例 |
+| `refresh_index` | 🆕 手动触发检查更新并重建索引 |
+| `watch_status` | 🆕 查看定时检查状态和更新日志 |
+
+## 定时检查更新
+
+```bash
+# 每 5 分钟自动检查组件仓库更新
+python mcp_server.py --watch 300 /path/to/pods
+
+# HTTP 模式 + 定时检查
+python mcp_server.py --http --watch 300 /path/to/pods
+```
+
+支持单仓库和多仓库（每个组件独立 git 仓库）。检测到更新后自动 git pull + 重建索引。
 
 ## HTTP 模式（云端部署）
 
@@ -100,6 +114,7 @@ MCP_API_KEYS="key1,key2" python mcp_server.py --http
 | `IOS_PODS_CACHE_DIR` | 缓存目录 | 脚本旁 `.cache/` |
 | `IOS_PODS_KEYS_FILE` | API Key 文件路径 | 脚本旁 `.api-keys` |
 | `IOS_PODS_MIXUP_MARKER` | 业务组件过滤标记 | `SUPPORT_MIXUP` |
+| `IOS_PODS_WATCH_INTERVAL` | 定时检查间隔（秒） | `0`（禁用） |
 | `MCP_API_KEYS` | API Key（逗号分隔） | 无 |
 
 ## 组件发现机制
@@ -183,6 +198,8 @@ Edit `AGENTS.md` to fill in your project-specific component table. Claude Code w
 | `get_class_detail(component_name, classname)` | Class view: definition, properties, methods |
 | `read_source(component_name, file, start?, end?)` | Read source lines (fuzzy filename match) |
 | `find_usage_example(component_name)` | Find imports/usage in other components |
+| `refresh_index` | 🆕 Manually check for updates and rebuild index |
+| `watch_status` | 🆕 View watch status and recent update logs |
 
 ## HTTP Mode (Cloud Deployment)
 
