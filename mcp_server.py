@@ -641,7 +641,11 @@ def get_class_detail(component_name: str, classname: str) -> str:
         component_name: 组件名称
         classname: 类名，如 BTBaseViewController
     """
-    comp = INDEX.get(component_name)
+    # 使用快照避免并发问题
+    with INDEX_LOCK:
+        index_snapshot = dict(INDEX)
+    
+    comp = index_snapshot.get(component_name)
     if not comp:
         return f"组件 \"{component_name}\" 不存在。"
 
