@@ -101,11 +101,32 @@ find_usage_example(组件名) — 查看其他组件如何 import 和使用，�
 # 组件发现 & 索引构建
 # ============================================================
 
-def discover_components(pods_dir: str) -> set:
-    """自动发现基础组件：扫描含 .podspec 且不含 MIXUP_MARKER 的目录"""
+def discover_components(pods_dir: str, return_filtered: bool = False) -> set | tuple:
+    """自动发现基础组件：扫描含 .podspec 的目录
+    
+    判定规则：
+    1. podspec 中不含任何 MIXUP 声明 → 基础组件
+    2. podspec 中的 MIXUP 声明全部为空数组 → 基础组件
+       - SUPPORT_MIXUP = []
+       - BETA_SUPPORT_MIXUP = []
+    3. podspec 中存在非空 MIXUP 声明 → 非基础组件
+       - SUPPORT_MIXUP = ['XXX', 'YYY']
+       - BETA_SUPPORT_MIXUP = ['VO']
+    
+    Args:
+        pods_dir: 组件库根目录
+        return_filtered: 是否同时返回被过滤的非基础组件
+    
+    Returns:
+        如果 return_filtered=False: 返回基础组件集合
+        如果 return_filtered=True: 返回 (基础组件集合, 非基础组件字典{name: mixup_values})
+    """
     components = set()
+    filtered = {}  # {组件名: mixup声明内容}
+    
     if not os.path.exists(pods_dir):
-        return components
+        return (components, filtered) if return_filtered else components
+    
     for entry in os.listdir(pods_dir):
         entry_path = os.path.join(pods_dir, entry)
         if not os.path.isdir(entry_path):
@@ -114,17 +135,33 @@ def discover_components(pods_dir: str) -> set:
         if not specs:
             continue
         spec_content = open(os.path.join(entry_path, specs[0]), encoding='utf-8', errors='ignore').read()
-        has_marker = False
+        
+        has_nonempty_mixup = False  # 是否有非空的 MIXUP 声明
+        mixup_values = []  # 记录 MIXUP 声明内容
+        
         for line in spec_content.split('\n'):
             stripped = line.strip()
+            # 跳过注释行
             if stripped.startswith('#') or stripped.startswith('//'):
                 continue
-            if re.search(rf'(?<![A-Z_]){MIXUP_MARKER}\s*=', stripped):
-                has_marker = True
-                break
-        if not has_marker:
+            
+            # 检查 SUPPORT_MIXUP 或 BETA_SUPPORT_MIXUP 声明
+            mixup_match = re.search(r'((?:SUPPORT_MIXUP|BETA_SUPPORT_MIXUP)\s*=\s*\[[^\]]*\])', stripped)
+            if mixup_match:
+                mixup_values.append(mixup_match.group(1))
+                array_match = re.search(r'=\s*\[([^\]]*)\]', mixup_match.group(1))
+                if array_match:
+                    array_content = array_match.group(1).strip()
+                    # 如果数组内容非空（有实际元素），则不是基础组件
+                    if array_content:
+                        has_nonempty_mixup = True
+        
+        if not has_nonempty_mixup:
             components.add(entry)
-    return components
+        else:
+            filtered[entry] = mixup_values
+    
+    return (components, filtered) if return_filtered else components
 
 
 def walk_dir(directory: str, skip_dirs: set = None) -> list:
@@ -306,7 +343,20 @@ def compute_hash(pods_dir: str, components: set) -> str:
 
 def build_index(pods_dir: str) -> dict:
     """构建或加载索引（带缓存）"""
-    components = discover_components(pods_dir)
+    components, filtered = discover_components(pods_dir, return_filtered=True)
+    
+    # 输出组件分类信息
+    print(f"\n[mcp-ios] ========== 组件分类 ==========", file=sys.stderr)
+    print(f"[mcp-ios] ✅ 基础组件 ({len(components)} 个):", file=sys.stderr)
+    for name in sorted(components):
+        print(f"    {name}", file=sys.stderr)
+    
+    print(f"\n[mcp-ios] ❌ 非基础组件 - 已过滤 ({len(filtered)} 个):", file=sys.stderr)
+    for name in sorted(filtered.keys()):
+        mixup_info = " | ".join(filtered[name])
+        print(f"    {name}: {mixup_info}", file=sys.stderr)
+    print(f"[mcp-ios] ==================================\n", file=sys.stderr)
+    
     if not components:
         print(f"[mcp-ios] 未在 {pods_dir} 发现组件", file=sys.stderr)
         return {}
