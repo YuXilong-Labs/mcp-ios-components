@@ -134,7 +134,8 @@ def discover_components(pods_dir: str, return_filtered: bool = False) -> set | t
         specs = [f for f in os.listdir(entry_path) if f.endswith('.podspec')]
         if not specs:
             continue
-        spec_content = open(os.path.join(entry_path, specs[0]), encoding='utf-8', errors='ignore').read()
+        with open(os.path.join(entry_path, specs[0]), encoding='utf-8', errors='ignore') as spec_file:
+            spec_content = spec_file.read()
         
         has_nonempty_mixup = False  # 是否有非空的 MIXUP 声明
         mixup_values = []  # 记录 MIXUP 声明内容
@@ -188,7 +189,8 @@ def parse_podspec(pod_dir: str, name: str) -> dict:
         spec_path = os.path.join(pod_dir, fname)
         if not os.path.exists(spec_path):
             continue
-        content = open(spec_path, encoding='utf-8', errors='ignore').read()
+        with open(spec_path, encoding='utf-8', errors='ignore') as f:
+            content = f.read()
         summary_m = re.search(r"\.summary\s*=\s*['\"](.+?)['\"]", content)
         desc_m = re.search(r'\.description\s*=\s*<<-DESC\s*([\s\S]*?)\s*DESC', content)
         desc_m2 = re.search(r"\.description\s*=\s*['\"](.+?)['\"]", content)
@@ -203,7 +205,8 @@ def extract_apis(file_path: str, rel_path: str) -> list:
     """提取 API 声明 + 注释"""
     apis = []
     try:
-        content = open(file_path, encoding='utf-8', errors='ignore').read()
+        with open(file_path, encoding='utf-8', errors='ignore') as f:
+            content = f.read()
     except:
         return apis
 
@@ -367,7 +370,8 @@ def build_index(pods_dir: str) -> dict:
     # 尝试加载缓存
     if os.path.exists(cache_path):
         try:
-            cached = json.load(open(cache_path))
+            with open(cache_path, encoding='utf-8') as f:
+                cached = json.load(f)
             if cached.get('hash') == current_hash:
                 print(f"[mcp-ios] 使用缓存索引 ({len(cached['components'])} 个组件)", file=sys.stderr)
                 return cached['components']
@@ -399,7 +403,8 @@ def build_index(pods_dir: str) -> dict:
 
     # 写缓存
     os.makedirs(CACHE_DIR, exist_ok=True)
-    json.dump({'hash': current_hash, 'components': index}, open(cache_path, 'w'), ensure_ascii=False)
+    with open(cache_path, 'w', encoding='utf-8') as f:
+        json.dump({'hash': current_hash, 'components': index}, f, ensure_ascii=False)
     print(f"[mcp-ios] 索引已缓存 ({len(index)} 个组件)", file=sys.stderr)
     return index
 
@@ -508,6 +513,8 @@ def list_components() -> str:
 # 输入验证常量
 MAX_KEYWORD_LEN = 500
 MAX_READ_LINES = 500
+MAX_API_OUTPUT = 200  # get_component_api 最大输出 API 数
+VALID_KINDS = {'interface', 'protocol', 'method', 'property', 'func', 'class', 'struct', 'enum', 'var', 'let', 'typealias', 'init', 'subscript'}
 
 @mcp.tool()
 def search_component(keyword: str, kind: str = "") -> str:
@@ -530,14 +537,20 @@ def search_component(keyword: str, kind: str = "") -> str:
         return "错误：关键词不能为空"
     if len(keyword) > MAX_KEYWORD_LEN:
         return f"错误：关键词过长（最大 {MAX_KEYWORD_LEN} 字符）"
+    if kind and kind not in VALID_KINDS:
+        return f"错误：无效的 kind 值，可选: {', '.join(sorted(VALID_KINDS))}"
     
-    if not INDEX:
+    # 使用快照避免并发问题
+    with INDEX_LOCK:
+        index_snapshot = dict(INDEX)
+    
+    if not index_snapshot:
         return "暂无索引数据。"
 
     kw = keyword.strip().lower()
     results = []
 
-    for comp in INDEX.values():
+    for comp in index_snapshot.values():
         # 匹配组件名
         if kw in comp['name'].lower():
             results.append(f"[组件] {comp['name']} — {comp['summary']}")
@@ -576,17 +589,28 @@ def get_component_api(component_name: str) -> str:
     Args:
         component_name: 组件名称，如 BTBaseKit、BTNetwork
     """
-    comp = INDEX.get(component_name)
+    # 使用快照避免并发问题
+    with INDEX_LOCK:
+        index_snapshot = dict(INDEX)
+    
+    comp = index_snapshot.get(component_name)
     if not comp:
-        available = ", ".join(sorted(INDEX.keys()))
+        available = ", ".join(sorted(index_snapshot.keys()))
         return f"组件 \"{component_name}\" 不存在。可用: {available}"
 
     if not comp['apis']:
         return f"{component_name} 未发现公开 API 声明"
 
+    # 限制输出大小
+    apis_list = comp['apis']
+    truncated = False
+    if len(apis_list) > MAX_API_OUTPUT:
+        apis_list = apis_list[:MAX_API_OUTPUT]
+        truncated = True
+
     # 按文件分组
     by_file = {}
-    for api in comp['apis']:
+    for api in apis_list:
         by_file.setdefault(api['file'], []).append(api)
 
     sections = []
@@ -603,7 +627,10 @@ def get_component_api(component_name: str) -> str:
             decls.append(s)
         sections.append(f"## {file}\n\n```\n" + "\n\n".join(decls) + "\n```")
 
-    return "\n\n".join(sections)
+    result = "\n\n".join(sections)
+    if truncated:
+        result += f"\n\n... 共 {len(comp['apis'])} 个 API，仅显示前 {MAX_API_OUTPUT} 个"
+    return result
 
 
 @mcp.tool()
@@ -817,7 +844,11 @@ def find_usage_example(component_name: str) -> str:
     Args:
         component_name: 组件名称
     """
-    if component_name not in INDEX:
+    # 使用快照避免并发问题
+    with INDEX_LOCK:
+        index_snapshot = dict(INDEX)
+    
+    if component_name not in index_snapshot:
         return f"\"{component_name}\" 不在已索引组件中。"
 
     import_patterns = [
@@ -828,7 +859,7 @@ def find_usage_example(component_name: str) -> str:
     ]
 
     results = []
-    for other_name, other_comp in INDEX.items():
+    for other_name, other_comp in index_snapshot.items():
         if other_name == component_name:
             continue
         other_dir = os.path.join(PODS_DIR, other_name)
@@ -837,7 +868,8 @@ def find_usage_example(component_name: str) -> str:
         for rel in source_files:
             full_path = os.path.join(other_dir, rel)
             try:
-                content = open(full_path, encoding='utf-8', errors='ignore').read()
+                with open(full_path, encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
             except:
                 continue
 
@@ -1109,7 +1141,7 @@ def main():
         else:
             print(f"已注册 API Keys ({len(keys)} 个):")
             for k in keys:
-                print(f"  {k['name']:20} {k['key']}")
+                print(f"  #{k['id']}: {k['name']}")
         return
 
     if args.api_keys:
