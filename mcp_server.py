@@ -890,6 +890,74 @@ def sync_from_config(config_path: str = "") -> str:
 
 
 @mcp.tool()
+def sync_gitlab_group_tool(group_id: str, gitlab_url: str = "", gitlab_token: str = "", use_ssh: bool = True) -> str:
+    """从 GitLab group 自动发现并同步基础组件。
+    
+    自动检查每个仓库的 podspec，只同步不含 MIXUP 声明（或为空数组）的基础组件。
+
+    Args:
+        group_id: GitLab group ID 或 path（如 "ios-team" 或 "123"）
+        gitlab_url: GitLab 服务器地址（默认使用环境变量 GITLAB_URL）
+        gitlab_token: GitLab API Token（默认使用环境变量 GITLAB_TOKEN）
+        use_ssh: 是否使用 SSH 地址克隆（默认 True）
+    """
+    token = gitlab_token or GITLAB_TOKEN
+    if not token:
+        return "错误：未配置 GitLab Token。请设置 GITLAB_TOKEN 环境变量或传入 gitlab_token 参数。"
+    
+    results = sync_gitlab_group(group_id, PODS_DIR, gitlab_url, token, use_ssh)
+    
+    if not results:
+        return "未找到仓库或获取失败"
+    
+    # 格式化输出
+    lines = [f"📦 GitLab Group '{group_id}' 同步结果:\n"]
+    
+    base_components = []
+    skipped = []
+    
+    for r in results:
+        if r["status"] == "skip":
+            skipped.append(f"⏭️ {r['name']}: {r['message']}")
+        else:
+            status_icon = {"cloned": "✅", "updated": "🔄", "error": "❌"}.get(r["status"], "❓")
+            base_components.append(f"{status_icon} {r['name']}: {r['message']}")
+    
+    if base_components:
+        lines.append("**基础组件:**")
+        lines.extend(base_components)
+    
+    if skipped:
+        lines.append(f"\n**已跳过（非基础组件，共 {len(skipped)} 个）:**")
+        # 只显示前 10 个
+        lines.extend(skipped[:10])
+        if len(skipped) > 10:
+            lines.append(f"... 还有 {len(skipped) - 10} 个")
+    
+    cloned = sum(1 for r in results if r["status"] == "cloned")
+    updated = sum(1 for r in results if r["status"] == "updated")
+    errors = sum(1 for r in results if r["status"] == "error")
+    
+    lines.append(f"\n📊 统计: {len(base_components)} 基础组件 ({cloned} 克隆, {updated} 更新, {errors} 错误), {len(skipped)} 已跳过")
+    
+    # 如果有新组件，触发重建索引
+    if cloned > 0:
+        lines.append("\n🔄 检测到新组件，正在重建索引...")
+        global INDEX, LAST_HASH
+        cache_path = os.path.join(CACHE_DIR, "index.json")
+        if os.path.exists(cache_path):
+            os.remove(cache_path)
+        new_index = build_index(PODS_DIR)
+        with INDEX_LOCK:
+            INDEX = new_index
+        components = discover_components(PODS_DIR)
+        LAST_HASH = compute_hash(PODS_DIR, components)
+        lines.append(f"✅ 索引已更新（{len(INDEX)} 个组件）")
+    
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def find_usage_example(component_name: str) -> str:
     """在其他组件中搜索该组件的使用示例（import/引用），帮助理解组件用法。
 
@@ -1278,6 +1346,214 @@ def sync_components(config_path: str, target_dir: str) -> list:
     return results
 
 
+# ============================================================
+# GitLab Group 自动发现
+# ============================================================
+
+GITLAB_URL = os.environ.get("GITLAB_URL", "https://gitlab.com")
+GITLAB_TOKEN = os.environ.get("GITLAB_TOKEN", "")
+
+def fetch_gitlab_group_repos(group_id: str, gitlab_url: str = "", gitlab_token: str = "") -> list:
+    """从 GitLab 获取指定 group 下的所有仓库"""
+    import urllib.request
+    import urllib.error
+    
+    base_url = gitlab_url or GITLAB_URL
+    token = gitlab_token or GITLAB_TOKEN
+    
+    if not token:
+        print("[mcp-ios] ⚠️ 未配置 GITLAB_TOKEN", file=sys.stderr)
+        return []
+    
+    repos = []
+    page = 1
+    per_page = 100
+    
+    while True:
+        url = f"{base_url}/api/v4/groups/{group_id}/projects?per_page={per_page}&page={page}&include_subgroups=true"
+        
+        req = urllib.request.Request(url)
+        req.add_header("PRIVATE-TOKEN", token)
+        
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                data = json.loads(response.read().decode())
+                
+                if not data:
+                    break
+                
+                for project in data:
+                    repos.append({
+                        "id": project["id"],
+                        "name": project["name"],
+                        "path": project["path"],
+                        "ssh_url": project.get("ssh_url_to_repo", ""),
+                        "http_url": project.get("http_url_to_repo", ""),
+                        "default_branch": project.get("default_branch", "main"),
+                    })
+                
+                page += 1
+                
+                # 检查是否还有下一页
+                if len(data) < per_page:
+                    break
+                    
+        except urllib.error.HTTPError as e:
+            print(f"[mcp-ios] ❌ GitLab API 错误: {e.code} {e.reason}", file=sys.stderr)
+            break
+        except Exception as e:
+            print(f"[mcp-ios] ❌ 请求失败: {e}", file=sys.stderr)
+            break
+    
+    return repos
+
+
+def check_repo_is_base_component(repo_url: str, branch: str = "main", gitlab_token: str = "") -> tuple:
+    """检查仓库是否为基础组件（通过检查 podspec 中的 MIXUP 声明）
+    
+    Returns:
+        (is_base_component, podspec_name, reason)
+    """
+    import urllib.request
+    import urllib.error
+    import base64
+    
+    token = gitlab_token or GITLAB_TOKEN
+    
+    # 从 URL 提取项目路径
+    # ssh: git@gitlab.com:group/project.git
+    # http: https://gitlab.com/group/project.git
+    if repo_url.startswith("git@"):
+        # git@gitlab.com:group/project.git -> group/project
+        path = repo_url.split(":")[-1].replace(".git", "")
+    else:
+        # https://gitlab.com/group/project.git -> group/project
+        path = "/".join(repo_url.split("/")[-2:]).replace(".git", "")
+    
+    project_encoded = path.replace("/", "%2F")
+    base_url = GITLAB_URL
+    
+    # 获取仓库文件列表（根目录）
+    url = f"{base_url}/api/v4/projects/{project_encoded}/repository/tree?ref={branch}&per_page=100"
+    
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("PRIVATE-TOKEN", token)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            files = json.loads(response.read().decode())
+    except Exception as e:
+        return (False, None, f"无法获取文件列表: {e}")
+    
+    # 查找 podspec 文件
+    podspec_file = None
+    for f in files:
+        if f["name"].endswith(".podspec") and f["type"] == "blob":
+            podspec_file = f["name"]
+            break
+    
+    if not podspec_file:
+        return (False, None, "无 podspec 文件")
+    
+    # 获取 podspec 内容
+    file_encoded = podspec_file.replace("/", "%2F")
+    url = f"{base_url}/api/v4/projects/{project_encoded}/repository/files/{file_encoded}/raw?ref={branch}"
+    
+    req = urllib.request.Request(url)
+    if token:
+        req.add_header("PRIVATE-TOKEN", token)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            content = response.read().decode('utf-8', errors='ignore')
+    except Exception as e:
+        return (False, podspec_file, f"无法读取 podspec: {e}")
+    
+    # 检查 MIXUP 声明
+    has_nonempty_mixup = False
+    mixup_values = []
+    
+    for line in content.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('#') or stripped.startswith('//'):
+            continue
+        
+        mixup_match = re.search(r'((?:SUPPORT_MIXUP|BETA_SUPPORT_MIXUP)\s*=\s*\[[^\]]*\])', stripped)
+        if mixup_match:
+            mixup_values.append(mixup_match.group(1))
+            array_match = re.search(r'=\s*\[([^\]]*)\]', mixup_match.group(1))
+            if array_match:
+                array_content = array_match.group(1).strip()
+                if array_content:
+                    has_nonempty_mixup = True
+    
+    if has_nonempty_mixup:
+        return (False, podspec_file, f"非基础组件: {', '.join(mixup_values)}")
+    
+    return (True, podspec_file, "基础组件")
+
+
+def sync_gitlab_group(group_id: str, target_dir: str, gitlab_url: str = "", gitlab_token: str = "", use_ssh: bool = True) -> list:
+    """从 GitLab group 自动发现并同步基础组件
+    
+    Args:
+        group_id: GitLab group ID 或 path (如 "ios-team" 或 "123")
+        target_dir: 目标目录
+        gitlab_url: GitLab 服务器地址
+        gitlab_token: GitLab API Token
+        use_ssh: 是否使用 SSH 地址克隆（默认 True）
+    """
+    print(f"[mcp-ios] 🔍 正在从 GitLab group '{group_id}' 获取仓库列表...", file=sys.stderr)
+    
+    repos = fetch_gitlab_group_repos(group_id, gitlab_url, gitlab_token)
+    
+    if not repos:
+        print(f"[mcp-ios] ⚠️ 未找到仓库或获取失败", file=sys.stderr)
+        return []
+    
+    print(f"[mcp-ios] 📦 发现 {len(repos)} 个仓库，正在检查是否为基础组件...", file=sys.stderr)
+    
+    os.makedirs(target_dir, exist_ok=True)
+    
+    results = []
+    base_count = 0
+    skip_count = 0
+    
+    for repo in repos:
+        name = repo["path"]
+        repo_url = repo["ssh_url"] if use_ssh else repo["http_url"]
+        branch = repo["default_branch"]
+        
+        # 检查是否为基础组件
+        is_base, podspec, reason = check_repo_is_base_component(
+            repo_url, branch, gitlab_token or GITLAB_TOKEN
+        )
+        
+        if not is_base:
+            print(f"  ⏭️ {name}: {reason}", file=sys.stderr)
+            results.append({"name": name, "status": "skip", "message": reason})
+            skip_count += 1
+            continue
+        
+        base_count += 1
+        
+        # 同步基础组件
+        result = sync_component(name, {"repo": repo_url, "branch": branch}, target_dir)
+        results.append(result)
+        
+        status_icon = {"cloned": "✅", "updated": "🔄", "skip": "⏭️", "error": "❌"}.get(result["status"], "❓")
+        print(f"  {status_icon} {name}: {result['message']}", file=sys.stderr)
+    
+    cloned = sum(1 for r in results if r["status"] == "cloned")
+    updated = sum(1 for r in results if r["status"] == "updated")
+    errors = sum(1 for r in results if r["status"] == "error")
+    
+    print(f"[mcp-ios] 📊 完成: {base_count} 基础组件 ({cloned} 克隆, {updated} 更新, {errors} 错误), {skip_count} 非基础组件已跳过", file=sys.stderr)
+    
+    return results
+
+
 def verify_gitlab_signature(body: bytes, signature: str) -> bool:
     """验证 GitLab webhook X-Gitlab-Token"""
     if not WEBHOOK_SECRET:
@@ -1308,6 +1584,14 @@ def main():
                         help="根据配置文件同步组件代码（默认 components.yaml）")
     parser.add_argument("--sync-only", action="store_true",
                         help="仅同步，不启动服务")
+    parser.add_argument("--gitlab-group", metavar="GROUP",
+                        help="从 GitLab group 自动发现并同步基础组件")
+    parser.add_argument("--gitlab-url", default="",
+                        help="GitLab 服务器地址（默认 https://gitlab.com 或 GITLAB_URL 环境变量）")
+    parser.add_argument("--gitlab-token", default="",
+                        help="GitLab API Token（或设置 GITLAB_TOKEN 环境变量）")
+    parser.add_argument("--use-https", action="store_true",
+                        help="使用 HTTPS 地址克隆（默认使用 SSH）")
 
     args = parser.parse_args()
     PODS_DIR = args.pods_dir
@@ -1331,7 +1615,7 @@ def main():
                 print(f"  #{k['id']}: {k['name']}")
         return
 
-    # 组件同步
+    # 组件同步（配置文件）
     if args.sync:
         config_path = args.sync
         if not os.path.isabs(config_path):
@@ -1342,6 +1626,27 @@ def main():
         
         if args.sync_only:
             # 仅同步，不启动服务
+            errors = sum(1 for r in results if r["status"] == "error")
+            sys.exit(1 if errors > 0 else 0)
+
+    # GitLab group 自动发现同步
+    if args.gitlab_group:
+        if args.gitlab_url:
+            global GITLAB_URL
+            GITLAB_URL = args.gitlab_url
+        if args.gitlab_token:
+            global GITLAB_TOKEN
+            GITLAB_TOKEN = args.gitlab_token
+        
+        results = sync_gitlab_group(
+            args.gitlab_group,
+            PODS_DIR,
+            args.gitlab_url,
+            args.gitlab_token,
+            use_ssh=not args.use_https
+        )
+        
+        if args.sync_only:
             errors = sum(1 for r in results if r["status"] == "error")
             sys.exit(1 if errors > 0 else 0)
 
