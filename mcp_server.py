@@ -408,43 +408,82 @@ def build_index(pods_dir: str) -> dict:
 # API Key 管理
 # ============================================================
 
-def load_api_keys() -> set:
-    keys = set()
+def _hash_api_key(key: str) -> str:
+    """对 API Key 进行 SHA256 哈希"""
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+def load_api_keys() -> dict:
+    """加载 API Keys，返回 {hash: name} 字典"""
+    keys = {}
     env_keys = os.environ.get("MCP_API_KEYS", "")
     if env_keys:
-        keys.update(k.strip() for k in env_keys.split(",") if k.strip())
+        for k in env_keys.split(","):
+            k = k.strip()
+            if k:
+                keys[_hash_api_key(k)] = "(env)"
     if os.path.exists(KEYS_FILE):
         with open(KEYS_FILE) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
-                    keys.add(line.split(":")[-1].strip())
+                    if ":" in line:
+                        name, key_or_hash = line.split(":", 1)
+                        key_or_hash = key_or_hash.strip()
+                        # 判断是否已经是 hash（64位hex）还是原始 key
+                        if len(key_or_hash) == 64 and all(c in '0123456789abcdef' for c in key_or_hash):
+                            keys[key_or_hash] = name.strip()
+                        else:
+                            # 兼容旧格式：原始 key，计算 hash
+                            keys[_hash_api_key(key_or_hash)] = name.strip()
+                    else:
+                        if len(line) == 64 and all(c in '0123456789abcdef' for c in line):
+                            keys[line] = "(unnamed)"
+                        else:
+                            keys[_hash_api_key(line)] = "(unnamed)"
     return keys
 
 
+def validate_api_key(provided_key: str, valid_keys: dict) -> bool:
+    """常量时间 API Key 验证，防止时序攻击"""
+    if not valid_keys:
+        return True  # 无 key 配置则允许
+    provided_hash = _hash_api_key(provided_key)
+    # 使用 hmac.compare_digest 进行常量时间比较
+    for stored_hash in valid_keys:
+        if hmac.compare_digest(provided_hash, stored_hash):
+            return True
+    return False
+
+
 def generate_api_key(name: str = "") -> str:
+    """生成新 API Key，存储 hash 而非明文"""
     key = f"sk-btp-{secrets.token_hex(24)}"
-    os.makedirs(os.path.dirname(KEYS_FILE), exist_ok=True)
+    key_hash = _hash_api_key(key)
+    os.makedirs(os.path.dirname(KEYS_FILE) or ".", exist_ok=True)
     with open(KEYS_FILE, "a") as f:
-        f.write(f"{name}:{key}\n" if name else f"{key}\n")
+        f.write(f"{name}:{key_hash}\n" if name else f"{key_hash}\n")
     os.chmod(KEYS_FILE, 0o600)
-    return key
+    return key  # 仅在生成时返回明文，之后无法恢复
 
 
 def list_api_keys() -> list:
+    """列出 API Keys（仅显示名称，不显示任何 key 信息）"""
     if not os.path.exists(KEYS_FILE):
         return []
     result = []
     with open(KEYS_FILE) as f:
+        idx = 0
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
+            idx += 1
             if ":" in line:
-                name, key = line.split(":", 1)
-                result.append({"name": name.strip(), "key": key[:10] + "..." + key[-4:]})
+                name, _ = line.split(":", 1)
+                result.append({"id": idx, "name": name.strip() or "(unnamed)"})
             else:
-                result.append({"name": "(unnamed)", "key": line[:10] + "..." + line[-4:]})
+                result.append({"id": idx, "name": "(unnamed)"})
     return result
 
 
@@ -466,6 +505,10 @@ def list_components() -> str:
     return f"共 {len(INDEX)} 个组件:\n\n" + "\n\n".join(lines)
 
 
+# 输入验证常量
+MAX_KEYWORD_LEN = 500
+MAX_READ_LINES = 500
+
 @mcp.tool()
 def search_component(keyword: str, kind: str = "") -> str:
     """搜索组件中的符号（类名、方法名、属性名、注释等，模糊匹配）。
@@ -482,10 +525,16 @@ def search_component(keyword: str, kind: str = "") -> str:
     Returns:
         匹配的 API 列表，包含组件名、文件、行号，可直接用于 read_source
     """
+    # 输入验证
+    if not keyword or not keyword.strip():
+        return "错误：关键词不能为空"
+    if len(keyword) > MAX_KEYWORD_LEN:
+        return f"错误：关键词过长（最大 {MAX_KEYWORD_LEN} 字符）"
+    
     if not INDEX:
         return "暂无索引数据。"
 
-    kw = keyword.lower()
+    kw = keyword.strip().lower()
     results = []
 
     for comp in INDEX.values():
@@ -628,11 +677,21 @@ def read_source(component_name: str, file: str, start: int = 1, end: int = 0) ->
         start: 起始行号（默认 1）
         end: 结束行号（默认 start+50）
     """
+    # 输入验证
+    if not component_name or not component_name.strip():
+        return "错误：组件名不能为空"
+    if not file or not file.strip():
+        return "错误：文件路径不能为空"
+    
+    # 防止路径遍历攻击：检查是否包含可疑字符
+    if '..' in file or file.startswith('/') or '..' in component_name:
+        return "错误：非法路径"
+    
     comp = INDEX.get(component_name)
     if not comp:
-        return f"组件 \"{component_name}\" 不存在。"
+        return "组件不存在"  # 不暴露具体组件名
 
-    # 精确匹配 → 后缀匹配 → 模糊匹配
+    # 精确匹配 → 后缀匹配 → 模糊匹配（仅在已索引文件列表中查找）
     fn_lower = file.lower()
     match = None
     for f in comp['files']:
@@ -652,14 +711,27 @@ def read_source(component_name: str, file: str, start: int = 1, end: int = 0) ->
 
     if not match:
         source_files = sorted(f for f in comp['files'] if is_source_file(f))
-        return f"文件 \"{file}\" 未找到。\n\n可用源文件:\n" + "\n".join(f"  - {f}" for f in source_files[:30])
+        return "文件未找到。\n\n可用源文件:\n" + "\n".join(f"  - {f}" for f in source_files[:30])
 
-    filepath = os.path.join(PODS_DIR, component_name, match)
+    # 路径安全验证：确保最终路径在允许范围内
+    filepath = os.path.realpath(os.path.join(PODS_DIR, component_name, match))
+    allowed_base = os.path.realpath(os.path.join(PODS_DIR, component_name))
+    if not filepath.startswith(allowed_base + os.sep) and filepath != allowed_base:
+        return "错误：禁止访问此路径"
+    
     if not os.path.exists(filepath):
-        return f"文件不存在: {match}"
+        return "文件不存在"  # 通用错误消息
 
     if end <= 0:
         end = start + 50
+    
+    # 限制单次最大读取行数
+    if end - start > MAX_READ_LINES:
+        return f"错误：单次最多读取 {MAX_READ_LINES} 行"
+    
+    # 验证 start <= end
+    if start > end:
+        return "错误：起始行号不能大于结束行号"
 
     with open(filepath, encoding='utf-8', errors='ignore') as f:
         all_lines = f.readlines()
@@ -798,35 +870,44 @@ def find_usage_example(component_name: str) -> str:
 # ============================================================
 
 def reindex():
-    """重新拉取代码并重建索引"""
+    """重新拉取代码并重建索引（带并发保护）"""
     global INDEX, LAST_HASH
-    print("[mcp-ios] 🔄 webhook 触发重建索引...", file=sys.stderr)
+    
+    # 并发保护：防止同时运行多个 reindex
+    if not REINDEX_LOCK.acquire(blocking=False):
+        print("[mcp-ios] ⚠️ reindex 已在运行，跳过本次请求", file=sys.stderr)
+        return
+    
+    try:
+        print("[mcp-ios] 🔄 webhook 触发重建索引...", file=sys.stderr)
 
-    # git pull（如果 PODS_DIR 是 git 仓库）
-    git_dir = os.path.join(PODS_DIR, ".git")
-    if os.path.isdir(git_dir):
-        try:
-            result = subprocess.run(
-                ["git", "pull", "--ff-only"],
-                cwd=PODS_DIR, capture_output=True, text=True, timeout=120,
-            )
-            print(f"[mcp-ios] git pull: {result.stdout.strip()}", file=sys.stderr)
-            if result.returncode != 0:
-                print(f"[mcp-ios] git pull stderr: {result.stderr.strip()}", file=sys.stderr)
-        except Exception as e:
-            print(f"[mcp-ios] git pull 失败: {e}", file=sys.stderr)
+        # git pull（如果 PODS_DIR 是 git 仓库）
+        git_dir = os.path.join(PODS_DIR, ".git")
+        if os.path.isdir(git_dir):
+            try:
+                result = subprocess.run(
+                    ["git", "pull", "--ff-only"],
+                    cwd=PODS_DIR, capture_output=True, text=True, timeout=120,
+                )
+                print(f"[mcp-ios] git pull: {result.stdout.strip()}", file=sys.stderr)
+                if result.returncode != 0:
+                    print(f"[mcp-ios] git pull stderr: {result.stderr.strip()}", file=sys.stderr)
+            except Exception as e:
+                print(f"[mcp-ios] git pull 失败: {e}", file=sys.stderr)
 
-    # 删除缓存强制重建
-    cache_path = os.path.join(CACHE_DIR, "index.json")
-    if os.path.exists(cache_path):
-        os.remove(cache_path)
+        # 删除缓存强制重建
+        cache_path = os.path.join(CACHE_DIR, "index.json")
+        if os.path.exists(cache_path):
+            os.remove(cache_path)
 
-    new_index = build_index(PODS_DIR)
-    with INDEX_LOCK:
-        INDEX = new_index
-    components = discover_components(PODS_DIR)
-    LAST_HASH = compute_hash(PODS_DIR, components)
-    print(f"[mcp-ios] ✅ 索引已更新 ({len(new_index)} 个组件)", file=sys.stderr)
+        new_index = build_index(PODS_DIR)
+        with INDEX_LOCK:
+            INDEX = new_index
+        components = discover_components(PODS_DIR)
+        LAST_HASH = compute_hash(PODS_DIR, components)
+        print(f"[mcp-ios] ✅ 索引已更新 ({len(new_index)} 个组件)", file=sys.stderr)
+    finally:
+        REINDEX_LOCK.release()
 
 
 # ============================================================
@@ -980,10 +1061,13 @@ def watch_loop(interval: int):
             print(f"[mcp-ios] ❌ 定时检查异常: {e}", file=sys.stderr)
 
 
+REINDEX_LOCK = threading.Lock()  # reindex 并发锁
+
 def verify_gitlab_signature(body: bytes, signature: str) -> bool:
     """验证 GitLab webhook X-Gitlab-Token"""
     if not WEBHOOK_SECRET:
-        return True  # 未配置 secret 则跳过验证
+        print("[mcp-ios] ⚠️ Webhook 请求被拒绝：未配置 WEBHOOK_SECRET", file=sys.stderr)
+        return False  # 未配置 secret 则拒绝所有请求
     return hmac.compare_digest(signature, WEBHOOK_SECRET)
 
 
@@ -1105,13 +1189,13 @@ def main():
             return JSONResponse({"status": "ok", "components": count})
 
         async def auth_mcp_app(scope, receive, send):
-            """MCP ASGI app with API Key auth"""
+            """MCP ASGI app with API Key auth（使用常量时间比较防止时序攻击）"""
             if scope["type"] == "http":
                 headers = dict(scope.get("headers", []))
                 auth_value = headers.get(b"authorization", b"").decode()
                 api_key = auth_value.replace("Bearer ", "").strip()
                 current_keys = load_api_keys()
-                if current_keys and api_key not in current_keys:
+                if not validate_api_key(api_key, current_keys):
                     response = JSONResponse(
                         {"error": "Unauthorized", "message": "Invalid or missing API key"},
                         status_code=401
