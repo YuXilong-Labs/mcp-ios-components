@@ -63,8 +63,39 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
 | `get_class_detail(component_name, classname)` | 类视图：定义、属性、公开/内部方法 |
 | `read_source(component_name, file, start?, end?)` | 按行读取源码（支持模糊文件名） |
 | `find_usage_example(component_name)` | 搜索其他组件中的使用示例 |
-| `refresh_index` | 🆕 手动触发检查更新并重建索引 |
-| `watch_status` | 🆕 查看定时检查状态和更新日志 |
+| `refresh_index` | 手动触发检查更新并重建索引 |
+| `watch_status` | 查看定时检查状态和更新日志 |
+| `sync_from_config(config_path?)` | 🆕 根据配置文件同步组件代码 |
+
+## 配置文件同步组件
+
+支持根据配置文件自动拉取组件代码：
+
+```bash
+# 创建配置文件
+cp components.yaml.example components.yaml
+# 编辑配置...
+
+# 同步组件（克隆/更新）
+python mcp_server.py --sync components.yaml /path/to/pods
+
+# 仅同步，不启动服务
+python mcp_server.py --sync --sync-only /path/to/pods
+
+# 同步后启动 HTTP 服务
+python mcp_server.py --sync --http /path/to/pods
+```
+
+配置文件格式（YAML）：
+```yaml
+components:
+  BTBaseKit: git@gitlab.com:ios/BTBaseKit.git  # 简化格式
+  BTNetwork:
+    repo: git@gitlab.com:ios/BTNetwork.git
+    branch: develop  # 指定分支
+```
+
+也可以通过 MCP 工具 `sync_from_config` 在运行时触发同步。
 
 ## 定时检查更新
 
@@ -198,8 +229,9 @@ Edit `AGENTS.md` to fill in your project-specific component table. Claude Code w
 | `get_class_detail(component_name, classname)` | Class view: definition, properties, methods |
 | `read_source(component_name, file, start?, end?)` | Read source lines (fuzzy filename match) |
 | `find_usage_example(component_name)` | Find imports/usage in other components |
-| `refresh_index` | 🆕 Manually check for updates and rebuild index |
-| `watch_status` | 🆕 View watch status and recent update logs |
+| `refresh_index` | Manually check for updates and rebuild index |
+| `watch_status` | View watch status and recent update logs |
+| `sync_from_config(config_path?)` | 🆕 Sync components from config file |
 
 ## HTTP Mode (Cloud Deployment)
 

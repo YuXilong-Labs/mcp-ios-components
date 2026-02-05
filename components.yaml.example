@@ -1,0 +1,30 @@
+# iOS 组件配置示例
+# 使用方法：
+#   1. 复制此文件为 components.yaml
+#   2. 填写组件仓库信息
+#   3. 运行: python mcp_server.py --sync /path/to/pods
+#
+# 也可以在服务运行时通过 MCP 工具 sync_from_config 触发同步
+
+components:
+  # 简化格式：直接指定仓库地址（使用默认分支 main）
+  BTBaseKit: git@gitlab.example.com:ios/BTBaseKit.git
+  
+  # 完整格式：指定分支
+  BTNetwork:
+    repo: git@gitlab.example.com:ios/BTNetwork.git
+    branch: main
+  
+  BTRouter:
+    repo: git@gitlab.example.com:ios/BTRouter.git
+    branch: develop
+  
+  # HTTPS 格式
+  BTLogger:
+    repo: https://gitlab.example.com/ios/BTLogger.git
+    branch: main
+
+# 说明：
+# - 组件会被克隆到 pods_dir/<component_name> 目录
+# - 已存在的组件会执行 git pull 更新
+# - 支持 SSH 和 HTTPS 两种仓库地址格式

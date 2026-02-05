@@ -842,6 +842,54 @@ def watch_status() -> str:
 
 
 @mcp.tool()
+def sync_from_config(config_path: str = "") -> str:
+    """根据配置文件同步组件代码（git clone/pull）。
+
+    Args:
+        config_path: 配置文件路径（默认 components.yaml）
+    """
+    if not config_path:
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "components.yaml")
+    
+    if not os.path.exists(config_path):
+        return f"配置文件不存在: {config_path}\n\n请创建 components.yaml，格式示例:\n```yaml\ncomponents:\n  BTBaseKit:\n    repo: git@gitlab.com:ios/BTBaseKit.git\n    branch: main\n```"
+    
+    results = sync_components(config_path, PODS_DIR)
+    
+    if not results:
+        return "无组件需要同步"
+    
+    # 格式化输出
+    lines = ["📦 组件同步结果:\n"]
+    for r in results:
+        status_icon = {"cloned": "✅", "updated": "🔄", "skip": "⏭️", "error": "❌"}.get(r["status"], "❓")
+        lines.append(f"{status_icon} **{r['name']}**: {r['message']}")
+    
+    cloned = sum(1 for r in results if r["status"] == "cloned")
+    updated = sum(1 for r in results if r["status"] == "updated")
+    errors = sum(1 for r in results if r["status"] == "error")
+    
+    lines.append(f"\n📊 统计: {cloned} 克隆, {updated} 更新, {errors} 错误")
+    
+    # 如果有新组件，触发重建索引
+    if cloned > 0:
+        lines.append("\n🔄 检测到新组件，正在重建索引...")
+        global INDEX, LAST_HASH
+        # 删除缓存
+        cache_path = os.path.join(CACHE_DIR, "index.json")
+        if os.path.exists(cache_path):
+            os.remove(cache_path)
+        new_index = build_index(PODS_DIR)
+        with INDEX_LOCK:
+            INDEX = new_index
+        components = discover_components(PODS_DIR)
+        LAST_HASH = compute_hash(PODS_DIR, components)
+        lines.append(f"✅ 索引已更新（{len(INDEX)} 个组件）")
+    
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def find_usage_example(component_name: str) -> str:
     """在其他组件中搜索该组件的使用示例（import/引用），帮助理解组件用法。
 
@@ -1099,6 +1147,137 @@ def watch_loop(interval: int):
 
 REINDEX_LOCK = threading.Lock()  # reindex 并发锁
 
+
+# ============================================================
+# 组件配置同步
+# ============================================================
+
+COMPONENTS_CONFIG_FILE = os.environ.get("IOS_PODS_CONFIG", "components.yaml")
+
+def load_components_config(config_path: str) -> dict:
+    """加载组件配置文件（YAML 或 JSON）"""
+    if not os.path.exists(config_path):
+        return {}
+    
+    with open(config_path, encoding='utf-8') as f:
+        content = f.read()
+    
+    if config_path.endswith('.yaml') or config_path.endswith('.yml'):
+        try:
+            import yaml
+            return yaml.safe_load(content) or {}
+        except ImportError:
+            print("[mcp-ios] ⚠️ 需要安装 pyyaml: pip install pyyaml", file=sys.stderr)
+            return {}
+    else:
+        return json.loads(content)
+
+
+def sync_component(name: str, config: dict, target_dir: str) -> dict:
+    """同步单个组件"""
+    result = {"name": name, "status": "unknown", "message": ""}
+    
+    repo = config.get("repo") or config.get("url")
+    branch = config.get("branch", "main")
+    
+    if not repo:
+        result["status"] = "skip"
+        result["message"] = "无 repo 配置"
+        return result
+    
+    comp_dir = os.path.join(target_dir, name)
+    
+    try:
+        if os.path.exists(comp_dir):
+            # 已存在，执行 git pull
+            if os.path.isdir(os.path.join(comp_dir, ".git")):
+                # 切换到目标分支
+                subprocess.run(
+                    ["git", "checkout", branch],
+                    cwd=comp_dir, capture_output=True, timeout=30,
+                )
+                # 拉取更新
+                pull = subprocess.run(
+                    ["git", "pull", "--ff-only"],
+                    cwd=comp_dir, capture_output=True, text=True, timeout=120,
+                )
+                if pull.returncode == 0:
+                    result["status"] = "updated"
+                    result["message"] = pull.stdout.strip() or "Already up to date"
+                else:
+                    result["status"] = "error"
+                    result["message"] = pull.stderr.strip()
+            else:
+                result["status"] = "skip"
+                result["message"] = "目录存在但非 git 仓库"
+        else:
+            # 不存在，执行 git clone
+            clone = subprocess.run(
+                ["git", "clone", "--branch", branch, "--single-branch", repo, name],
+                cwd=target_dir, capture_output=True, text=True, timeout=300,
+            )
+            if clone.returncode == 0:
+                result["status"] = "cloned"
+                result["message"] = f"从 {repo} 克隆成功"
+            else:
+                result["status"] = "error"
+                result["message"] = clone.stderr.strip()
+    
+    except subprocess.TimeoutExpired:
+        result["status"] = "error"
+        result["message"] = "操作超时"
+    except Exception as e:
+        result["status"] = "error"
+        result["message"] = str(e)
+    
+    return result
+
+
+def sync_components(config_path: str, target_dir: str) -> list:
+    """根据配置文件同步所有组件"""
+    config = load_components_config(config_path)
+    
+    if not config:
+        print(f"[mcp-ios] ⚠️ 配置文件为空或不存在: {config_path}", file=sys.stderr)
+        return []
+    
+    components = config.get("components", {})
+    if not components:
+        print(f"[mcp-ios] ⚠️ 配置文件中无 components 定义", file=sys.stderr)
+        return []
+    
+    os.makedirs(target_dir, exist_ok=True)
+    
+    results = []
+    print(f"[mcp-ios] 🔄 开始同步 {len(components)} 个组件...", file=sys.stderr)
+    
+    for name, comp_config in components.items():
+        if isinstance(comp_config, str):
+            # 简化格式：name: "repo_url"
+            comp_config = {"repo": comp_config}
+        
+        result = sync_component(name, comp_config, target_dir)
+        results.append(result)
+        
+        status_icon = {
+            "cloned": "✅",
+            "updated": "🔄",
+            "skip": "⏭️",
+            "error": "❌",
+        }.get(result["status"], "❓")
+        
+        print(f"  {status_icon} {name}: {result['message']}", file=sys.stderr)
+    
+    # 统计
+    cloned = sum(1 for r in results if r["status"] == "cloned")
+    updated = sum(1 for r in results if r["status"] == "updated")
+    errors = sum(1 for r in results if r["status"] == "error")
+    
+    print(f"[mcp-ios] 📊 同步完成: {cloned} 克隆, {updated} 更新, {errors} 错误", file=sys.stderr)
+    
+    return results
+
+
 def verify_gitlab_signature(body: bytes, signature: str) -> bool:
     """验证 GitLab webhook X-Gitlab-Token"""
     if not WEBHOOK_SECRET:
@@ -1125,6 +1304,10 @@ def main():
     parser.add_argument("--webhook-secret", help="GitLab Webhook Secret Token")
     parser.add_argument("--watch", type=int, metavar="SECONDS", default=0,
                         help="定时检查间隔（秒），如 --watch 300 表示每 5 分钟检查一次")
+    parser.add_argument("--sync", metavar="CONFIG", nargs="?", const="components.yaml",
+                        help="根据配置文件同步组件代码（默认 components.yaml）")
+    parser.add_argument("--sync-only", action="store_true",
+                        help="仅同步，不启动服务")
 
     args = parser.parse_args()
     PODS_DIR = args.pods_dir
@@ -1147,6 +1330,20 @@ def main():
             for k in keys:
                 print(f"  #{k['id']}: {k['name']}")
         return
+
+    # 组件同步
+    if args.sync:
+        config_path = args.sync
+        if not os.path.isabs(config_path):
+            # 相对路径基于脚本目录
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config_path)
+        
+        results = sync_components(config_path, PODS_DIR)
+        
+        if args.sync_only:
+            # 仅同步，不启动服务
+            errors = sum(1 for r in results if r["status"] == "error")
+            sys.exit(1 if errors > 0 else 0)
 
     if args.api_keys:
         os.environ["MCP_API_KEYS"] = args.api_keys
