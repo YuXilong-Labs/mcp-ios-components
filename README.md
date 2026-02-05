@@ -65,7 +65,8 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
 | `find_usage_example(component_name)` | 搜索其他组件中的使用示例 |
 | `refresh_index` | 手动触发检查更新并重建索引 |
 | `watch_status` | 查看定时检查状态和更新日志 |
-| `sync_from_config(config_path?)` | 🆕 根据配置文件同步组件代码 |
+| `sync_from_config(config_path?)` | 根据配置文件同步组件代码 |
+| `sync_gitlab_group(group_id, ...)` | 🆕 自动发现并同步 GitLab Group 下的基础组件 |
 
 ## 配置文件同步组件
 
@@ -96,6 +97,41 @@ components:
 ```
 
 也可以通过 MCP 工具 `sync_from_config` 在运行时触发同步。
+
+## GitLab Group 自动发现
+
+自动扫描 GitLab Group 下的所有仓库，识别基础组件并同步：
+
+```bash
+# 同步指定 Group 下的基础组件
+python mcp_server.py --gitlab-group ios-components /path/to/pods
+
+# 自定义 GitLab 服务器
+python mcp_server.py --gitlab-group ios-components \
+  --gitlab-url https://gitlab.your-company.com \
+  /path/to/pods
+```
+
+### 基础组件判定规则
+
+Server 会检查每个仓库的 podspec 文件，以下任一条件满足则判定为基础组件：
+- **无 SUPPORT_MIXUP 标记** — podspec 中不含业务组件标记
+- **dependency 数量 ≤ 3** — 依赖少，说明是底层组件
+
+### 环境变量配置
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `GITLAB_URL` | GitLab 服务器地址 | `https://gitlab.com` |
+| `GITLAB_TOKEN` | GitLab API Token（需要 read_api 权限） | 无 |
+
+### MCP 工具调用
+
+运行时也可通过 `sync_gitlab_group` 工具触发同步：
+
+```
+sync_gitlab_group(group_id="ios-components", gitlab_url="", gitlab_token="", use_ssh=true)
+```
 
 ## 定时检查更新
 
@@ -147,6 +183,8 @@ MCP_API_KEYS="key1,key2" python mcp_server.py --http
 | `IOS_PODS_MIXUP_MARKER` | 业务组件过滤标记 | `SUPPORT_MIXUP` |
 | `IOS_PODS_WATCH_INTERVAL` | 定时检查间隔（秒） | `0`（禁用） |
 | `MCP_API_KEYS` | API Key（逗号分隔） | 无 |
+| `GITLAB_URL` | GitLab 服务器地址 | `https://gitlab.com` |
+| `GITLAB_TOKEN` | GitLab API Token | 无 |
 
 ## 组件发现机制
 
@@ -231,7 +269,35 @@ Edit `AGENTS.md` to fill in your project-specific component table. Claude Code w
 | `find_usage_example(component_name)` | Find imports/usage in other components |
 | `refresh_index` | Manually check for updates and rebuild index |
 | `watch_status` | View watch status and recent update logs |
-| `sync_from_config(config_path?)` | 🆕 Sync components from config file |
+| `sync_from_config(config_path?)` | Sync components from config file |
+| `sync_gitlab_group(group_id, ...)` | 🆕 Auto-discover and sync base components from GitLab Group |
+
+## GitLab Group Auto-Discovery
+
+Automatically scan all repos under a GitLab Group and sync base components:
+
+```bash
+# Sync base components from a GitLab Group
+python mcp_server.py --gitlab-group ios-components /path/to/pods
+
+# Custom GitLab server
+python mcp_server.py --gitlab-group ios-components \
+  --gitlab-url https://gitlab.your-company.com \
+  /path/to/pods
+```
+
+### Base Component Detection Rules
+
+The server checks each repo's podspec. A component is considered "base" if either:
+- **No SUPPORT_MIXUP marker** — podspec doesn't contain the business component marker
+- **≤ 3 dependencies** — few deps indicates a low-level component
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GITLAB_URL` | GitLab server URL | `https://gitlab.com` |
+| `GITLAB_TOKEN` | GitLab API Token (needs read_api scope) | (none) |
 
 ## HTTP Mode (Cloud Deployment)
 
@@ -270,6 +336,8 @@ MCP_API_KEYS="key1,key2" python mcp_server.py --http
 | `IOS_PODS_KEYS_FILE` | API keys file path | `.api-keys` next to script |
 | `IOS_PODS_MIXUP_MARKER` | Marker to filter business components | `SUPPORT_MIXUP` |
 | `MCP_API_KEYS` | Comma-separated API keys | (none) |
+| `GITLAB_URL` | GitLab server URL | `https://gitlab.com` |
+| `GITLAB_TOKEN` | GitLab API Token | (none) |
 
 ## Component Discovery
 
