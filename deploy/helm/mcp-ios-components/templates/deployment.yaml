@@ -1,0 +1,143 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-ios-components.fullname" . }}
+  labels:
+    {{- include "mcp-ios-components.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mcp-ios-components.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-ios-components.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "mcp-ios-components.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mcp
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --http
+            - --port
+            - "8900"
+            - --host
+            - "0.0.0.0"
+            - --watch
+            - "{{ .Values.mcp.watchInterval }}"
+            {{- if .Values.gitlab.group }}
+            - --gitlab-group
+            - "{{ .Values.gitlab.group }}"
+            {{- end }}
+            - /data/pods
+          env:
+            - name: IOS_PODS_DIR
+              value: /data/pods
+            - name: IOS_PODS_CACHE_DIR
+              value: /data/cache
+            - name: IOS_PODS_KEYS_FILE
+              value: /data/keys/.api-keys
+            - name: IOS_PODS_MIXUP_MARKER
+              value: "{{ .Values.mcp.mixupMarker }}"
+            {{- if .Values.gitlab.url }}
+            - name: GITLAB_URL
+              value: "{{ .Values.gitlab.url }}"
+            {{- end }}
+            {{- if or .Values.gitlab.token .Values.gitlab.existingSecret }}
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gitlab.existingSecret | default (printf "%s-gitlab" (include "mcp-ios-components.fullname" .)) }}
+                  key: {{ .Values.gitlab.existingSecretKey }}
+            {{- end }}
+            {{- if or .Values.webhook.secret .Values.webhook.existingSecret }}
+            - name: MCP_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.webhook.existingSecret | default (printf "%s-webhook" (include "mcp-ios-components.fullname" .)) }}
+                  key: {{ .Values.webhook.existingSecretKey }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8900
+              protocol: TCP
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+          {{- end }}
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: pods-data
+              mountPath: /data/pods
+            - name: cache-data
+              mountPath: /data/cache
+            - name: keys-data
+              mountPath: /data/keys
+            {{- if .Values.ssh.enabled }}
+            - name: ssh-key
+              mountPath: /root/.ssh
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: pods-data
+          {{- if .Values.persistence.pods.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "mcp-ios-components.fullname" . }}-pods
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: cache-data
+          {{- if .Values.persistence.cache.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "mcp-ios-components.fullname" . }}-cache
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: keys-data
+          {{- if .Values.apiKeys.existingSecret }}
+          secret:
+            secretName: {{ .Values.apiKeys.existingSecret }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.ssh.enabled }}
+        - name: ssh-key
+          secret:
+            secretName: {{ .Values.ssh.existingSecret | default (printf "%s-ssh" (include "mcp-ios-components.fullname" .)) }}
+            defaultMode: 0600
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

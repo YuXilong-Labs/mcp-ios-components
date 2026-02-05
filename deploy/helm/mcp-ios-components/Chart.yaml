@@ -1,0 +1,15 @@
+apiVersion: v2
+name: mcp-ios-components
+description: MCP Server for iOS CocoaPods component APIs
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: YuXilong-Labs
+    url: https://github.com/YuXilong-Labs
+keywords:
+  - mcp
+  - ios
+  - cocoapods
+  - ai
+  - claude

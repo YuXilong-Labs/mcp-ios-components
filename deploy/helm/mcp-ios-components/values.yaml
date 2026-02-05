@@ -1,0 +1,119 @@
+# MCP iOS Components Helm Values
+
+replicaCount: 1
+
+image:
+  repository: mcp-ios-components
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# 服务配置
+service:
+  type: ClusterIP
+  port: 8900
+
+# Ingress 配置
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+  host: mcp.your-company.com
+  tls:
+    enabled: false
+    secretName: mcp-tls
+
+# MCP 服务配置
+mcp:
+  # 组件更新检查间隔（秒）
+  watchInterval: 300
+  
+  # 业务组件过滤标记
+  mixupMarker: SUPPORT_MIXUP
+
+# GitLab 配置
+gitlab:
+  url: ""
+  token: ""
+  group: ""
+  # 使用已有 Secret（优先级高于 token）
+  existingSecret: ""
+  existingSecretKey: "gitlab-token"
+
+# Webhook 配置
+webhook:
+  secret: ""
+  existingSecret: ""
+  existingSecretKey: "webhook-secret"
+
+# API Key 配置
+apiKeys:
+  # 初始 API Keys（逗号分隔）
+  keys: ""
+  existingSecret: ""
+  existingSecretKey: "api-keys"
+
+# SSH 密钥（用于 git clone）
+ssh:
+  enabled: false
+  existingSecret: ""
+  privateKey: ""
+
+# 持久化存储
+persistence:
+  pods:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  cache:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+
+# 资源限制
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# 探针配置
+probes:
+  liveness:
+    enabled: true
+    path: /webhook/health
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  readiness:
+    enabled: true
+    path: /webhook/health
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# Pod 配置
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod 安全上下文
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000

@@ -1,0 +1,113 @@
+# MCP iOS Components - Docker Compose 生产配置
+# 
+# 使用方法:
+#   1. cp .env.example .env && vim .env
+#   2. docker compose up -d
+#   3. docker compose logs -f
+
+services:
+  mcp:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: mcp-ios-components:latest
+    container_name: mcp-ios-components
+    restart: unless-stopped
+    
+    ports:
+      - "${MCP_PORT:-8900}:8900"
+    
+    environment:
+      # 基础配置
+      - IOS_PODS_DIR=/data/pods
+      - IOS_PODS_CACHE_DIR=/data/cache
+      - IOS_PODS_KEYS_FILE=/data/keys/.api-keys
+      - IOS_PODS_WATCH_INTERVAL=${WATCH_INTERVAL:-300}
+      - IOS_PODS_MIXUP_MARKER=${MIXUP_MARKER:-SUPPORT_MIXUP}
+      
+      # GitLab 配置
+      - GITLAB_URL=${GITLAB_URL:-}
+      - GITLAB_TOKEN=${GITLAB_TOKEN:-}
+      
+      # Webhook 安全
+      - MCP_WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+    
+    volumes:
+      # 组件仓库（持久化）
+      - ${PODS_DATA_DIR:-./data/pods}:/data/pods
+      
+      # 索引缓存（可重建，但保留加速启动）
+      - ${CACHE_DATA_DIR:-./data/cache}:/data/cache
+      
+      # API 密钥（重要！）
+      - ${KEYS_DATA_DIR:-./data/keys}:/data/keys
+      
+      # SSH 密钥（用于 git clone）
+      - ${SSH_KEY_PATH:-~/.ssh/id_rsa}:/root/.ssh/id_rsa:ro
+      - ${SSH_KEY_PATH:-~/.ssh/id_rsa}.pub:/root/.ssh/id_rsa.pub:ro
+      
+      # 组件配置文件（可选）
+      - ${COMPONENTS_YAML:-./components.yaml}:/app/components.yaml:ro
+    
+    command: >
+      --http
+      --port 8900
+      --host 0.0.0.0
+      --watch ${WATCH_INTERVAL:-300}
+      ${GITLAB_GROUP:+--gitlab-group ${GITLAB_GROUP}}
+      /data/pods
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8900/webhook/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # 可选：Nginx 反向代理（启用 HTTPS）
+  nginx:
+    image: nginx:alpine
+    container_name: mcp-nginx
+    restart: unless-stopped
+    profiles:
+      - with-nginx
+    
+    ports:
+      - "443:443"
+      - "80:80"
+    
+    volumes:
+      - ./nginx/mcp.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${SSL_CERT_PATH:-./nginx/ssl/cert.pem}:/etc/ssl/certs/mcp.crt:ro
+      - ${SSL_KEY_PATH:-./nginx/ssl/key.pem}:/etc/ssl/private/mcp.key:ro
+    
+    depends_on:
+      - mcp
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+# 命名卷（可选，用于跨主机迁移）
+volumes:
+  pods_data:
+  cache_data:
+  keys_data:

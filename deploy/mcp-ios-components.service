@@ -1,0 +1,70 @@
+# MCP iOS Components Systemd Service
+# 
+# 安装步骤:
+#   1. sudo cp mcp-ios-components.service /etc/systemd/system/
+#   2. sudo systemctl daemon-reload
+#   3. sudo systemctl enable mcp-ios-components
+#   4. sudo systemctl start mcp-ios-components
+#
+# 日志查看:
+#   journalctl -u mcp-ios-components -f
+
+[Unit]
+Description=MCP iOS Components Server
+Documentation=https://github.com/YuXilong-Labs/mcp-ios-components
+After=network.target
+
+[Service]
+Type=simple
+User=mcp
+Group=mcp
+
+# 工作目录
+WorkingDirectory=/opt/mcp-ios-components
+
+# Python 虚拟环境
+Environment="PATH=/opt/mcp-ios-components/.venv/bin:/usr/local/bin:/usr/bin"
+
+# 服务配置
+Environment="IOS_PODS_DIR=/data/mcp/pods"
+Environment="IOS_PODS_CACHE_DIR=/data/mcp/cache"
+Environment="IOS_PODS_KEYS_FILE=/data/mcp/keys/.api-keys"
+Environment="IOS_PODS_WATCH_INTERVAL=300"
+
+# GitLab 配置（可选）
+# Environment="GITLAB_URL=https://gitlab.your-company.com"
+# Environment="GITLAB_TOKEN=glpat-xxx"
+
+# Webhook 安全
+# Environment="MCP_WEBHOOK_SECRET=your-secret"
+
+# 启动命令
+ExecStart=/opt/mcp-ios-components/.venv/bin/python mcp_server.py \
+    --http \
+    --port 8900 \
+    --host 127.0.0.1 \
+    --watch 300 \
+    /data/mcp/pods
+
+# 重启策略
+Restart=always
+RestartSec=5
+
+# 资源限制
+MemoryMax=2G
+CPUQuota=200%
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data/mcp
+PrivateTmp=true
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mcp-ios
+
+[Install]
+WantedBy=multi-user.target

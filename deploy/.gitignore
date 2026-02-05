@@ -1,0 +1,15 @@
+# 环境配置（含敏感信息）
+.env
+components.yaml
+
+# 数据目录
+data/
+
+# SSL 证书
+nginx/ssl/*.pem
+nginx/ssl/*.crt
+nginx/ssl/*.key
+
+# 日志
+logs/
+*.log
