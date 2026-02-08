@@ -123,11 +123,19 @@ def discover_components(pods_dir: str, return_filtered: bool = False) -> set | t
     """
     components = set()
     filtered = {}  # {组件名: mixup声明内容}
+
+    # Optional allowlist for safe/fast smoke tests.
+    # Example: IOS_PODS_INCLUDE="BTBaseKit,BTNetwork"
+    include_env = os.getenv("IOS_PODS_INCLUDE", "").strip()
+    include_set = {x.strip() for x in include_env.split(",") if x.strip()} if include_env else set()
+    include_set_lower = {x.lower() for x in include_set}
     
     if not os.path.exists(pods_dir):
         return (components, filtered) if return_filtered else components
     
     for entry in os.listdir(pods_dir):
+        if include_set and entry.lower() not in include_set_lower:
+            continue
         entry_path = os.path.join(pods_dir, entry)
         if not os.path.isdir(entry_path):
             continue
@@ -184,21 +192,42 @@ def is_source_file(f: str) -> bool:
 
 
 def parse_podspec(pod_dir: str, name: str) -> dict:
-    """从 podspec 提取 summary 和 description"""
-    for fname in [f'{name}.podspec', f'{name}.podspec.json']:
+    """从 podspec 提取 name/summary/description。
+
+    Note: repo directory name may not match the pod name (case or naming).
+    We try common filenames first, then fall back to the first *.podspec.
+    """
+    candidates = [f'{name}.podspec', f'{name}.podspec.json']
+
+    # Fall back to any podspec in the directory.
+    try:
+        for f in os.listdir(pod_dir):
+            if f.endswith('.podspec') and f not in candidates:
+                candidates.append(f)
+                break
+    except Exception:
+        pass
+
+    for fname in candidates:
         spec_path = os.path.join(pod_dir, fname)
         if not os.path.exists(spec_path):
             continue
         with open(spec_path, encoding='utf-8', errors='ignore') as f:
             content = f.read()
+
+        name_m = re.search(r"\.name\s*=\s*['\"](.+?)['\"]", content)
         summary_m = re.search(r"\.summary\s*=\s*['\"](.+?)['\"]", content)
         desc_m = re.search(r'\.description\s*=\s*<<-DESC\s*([\s\S]*?)\s*DESC', content)
         desc_m2 = re.search(r"\.description\s*=\s*['\"](.+?)['\"]", content)
+
         return {
+            'pod_name': name_m.group(1) if name_m else name,
             'summary': summary_m.group(1) if summary_m else '',
             'description': (desc_m.group(1).strip() if desc_m else desc_m2.group(1) if desc_m2 else ''),
+            'podspec': fname,
         }
-    return {'summary': '', 'description': ''}
+
+    return {'pod_name': name, 'summary': '', 'description': '', 'podspec': ''}
 
 
 def extract_apis(file_path: str, rel_path: str) -> list:
@@ -380,26 +409,33 @@ def build_index(pods_dir: str) -> dict:
 
     print(f"[mcp-ios] 构建索引... ({len(components)} 个组件)", file=sys.stderr)
     index = {}
-    for name in sorted(components):
-        comp_dir = os.path.join(pods_dir, name)
+    for dir_name in sorted(components):
+        comp_dir = os.path.join(pods_dir, dir_name)
         try:
-            spec = parse_podspec(comp_dir, name)
+            spec = parse_podspec(comp_dir, dir_name)
+            pod_name = spec.get('pod_name') or dir_name
+
             all_files = walk_dir(comp_dir)
             source_files = [f for f in all_files if is_source_file(f)]
             apis = []
             for f in source_files:
                 apis.extend(extract_apis(os.path.join(comp_dir, f), f))
-            index[name] = {
-                'name': name,
-                'summary': spec['summary'],
-                'description': spec['description'],
+
+            # Key by pod name so agents can address components consistently.
+            # Keep dir_name for filesystem operations.
+            index[pod_name] = {
+                'name': pod_name,
+                'dir': dir_name,
+                'podspec': spec.get('podspec', ''),
+                'summary': spec.get('summary', ''),
+                'description': spec.get('description', ''),
                 'apis': apis,
                 'files': all_files,
                 'source_count': len(source_files),
             }
-            print(f"  ✓ {name}: {len(apis)} APIs, {len(source_files)} 源文件", file=sys.stderr)
+            print(f"  ✓ {pod_name} ({dir_name}): {len(apis)} APIs, {len(source_files)} 源文件", file=sys.stderr)
         except Exception as e:
-            print(f"  ✗ {name}: {e}", file=sys.stderr)
+            print(f"  ✗ {dir_name}: {e}", file=sys.stderr)
 
     # 写缓存
     os.makedirs(CACHE_DIR, exist_ok=True)
@@ -510,14 +546,81 @@ def list_components() -> str:
     return f"共 {len(INDEX)} 个组件:\n\n" + "\n\n".join(lines)
 
 
+@mcp.tool()
+def get_tool_docs(tool_name: str = "", format: str = "text") -> str:
+    """返回 MCP 工具的详细说明（给 agent 用）。
+
+    Best practice: agent 在首次接入服务、或不确定某个工具怎么用时，先调用本工具。
+
+    Args:
+        tool_name: 可选。为空时返回所有工具的概览；指定工具名时返回该工具的完整说明。
+        format: 返回格式，"text" 或 "json"。
+
+    Returns:
+        - format=text: Markdown 文本
+        - format=json: JSON 字符串（稳定结构，便于 agent 解析）
+    """
+    if format not in VALID_FORMATS:
+        return f"错误：无效的 format 值，可选: {', '.join(sorted(VALID_FORMATS))}"
+
+    import inspect
+
+    # Tool registry (manually curated to keep output small and stable)
+    tools = {
+        "list_components": list_components,
+        "search_component": search_component,
+        "get_component_api": get_component_api,
+        "get_class_detail": get_class_detail,
+        "read_source": read_source,
+        "find_usage_example": find_usage_example,
+        "refresh_index": refresh_index,
+        "watch_status": watch_status,
+        "sync_from_config": sync_from_config,
+        "sync_gitlab_group": sync_gitlab_group_tool,
+        "get_tool_docs": get_tool_docs,
+    }
+
+    def doc_for(name: str, fn):
+        sig = str(inspect.signature(fn))
+        doc = (inspect.getdoc(fn) or "").strip()
+        return {"name": name, "signature": f"{name}{sig}", "doc": doc}
+
+    if tool_name:
+        fn = tools.get(tool_name)
+        if not fn:
+            available = ", ".join(sorted(tools.keys()))
+            return f"未知工具：{tool_name}\n可用工具：{available}" if format == "text" else _to_json({"ok": False, "error": "unknown_tool", "tool": tool_name, "available": sorted(tools.keys())})
+        payload = {"ok": True, "tool": doc_for(tool_name, fn)}
+        return _to_json(payload) if format == "json" else f"# {payload['tool']['name']}\n\n`{payload['tool']['signature']}`\n\n{payload['tool']['doc']}"
+
+    all_docs = [doc_for(n, f) for n, f in tools.items()]
+    all_docs = sorted(all_docs, key=lambda x: x["name"])
+
+    if format == "json":
+        return _to_json({"ok": True, "tools": all_docs})
+
+    lines = ["# MCP 工具说明", "", "建议调用顺序：search_component -> (get_component_api/get_class_detail) -> read_source -> find_usage_example", ""]
+    for t in all_docs:
+        one_line = t["doc"].split("\n")[0] if t["doc"] else ""
+        lines.append(f"- `{t['name']}`: {one_line}")
+    lines.append("\n想看某个工具的完整说明：get_tool_docs(tool_name=\"search_component\")")
+    return "\n".join(lines)
+
+
 # 输入验证常量
 MAX_KEYWORD_LEN = 500
 MAX_READ_LINES = 500
 MAX_API_OUTPUT = 200  # get_component_api 最大输出 API 数
 VALID_KINDS = {'interface', 'protocol', 'method', 'property', 'func', 'class', 'struct', 'enum', 'var', 'let', 'typealias', 'init', 'subscript'}
+VALID_FORMATS = {"text", "json"}
+
+
+def _to_json(data) -> str:
+    """Serialize as JSON string (stable output for agents)."""
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 @mcp.tool()
-def search_component(keyword: str, kind: str = "") -> str:
+def search_component(keyword: str, kind: str = "", format: str = "text", limit: int = 50) -> str:
     """搜索组件中的符号（类名、方法名、属性名、注释等，模糊匹配）。
     
     ⚠️ 实现 UI/网络/图片/工具类功能前必须先调用此工具！
@@ -539,46 +642,115 @@ def search_component(keyword: str, kind: str = "") -> str:
         return f"错误：关键词过长（最大 {MAX_KEYWORD_LEN} 字符）"
     if kind and kind not in VALID_KINDS:
         return f"错误：无效的 kind 值，可选: {', '.join(sorted(VALID_KINDS))}"
-    
+    if format not in VALID_FORMATS:
+        return f"错误：无效的 format 值，可选: {', '.join(sorted(VALID_FORMATS))}"
+
+    # limit: keep small by default to avoid context bloat
+    try:
+        limit = int(limit)
+    except Exception:
+        limit = 50
+    limit = max(1, min(200, limit))
+
     # 使用快照避免并发问题
     with INDEX_LOCK:
         index_snapshot = dict(INDEX)
-    
+
     if not index_snapshot:
         return "暂无索引数据。"
 
     kw = keyword.strip().lower()
-    results = []
+    text_results: list[str] = []
+    json_results: list[dict] = []
+
+    def add_hit(comp_name: str, api: dict | None, kind_label: str, name: str, declaration: str = "", file: str = "", line: int = 0, comment: str = ""):
+        if len(json_results) >= limit:
+            return
+        comment_preview = ""
+        if comment:
+            comment_preview = comment.split("\n")[0].strip()
+
+        if api is None:
+            text_results.append(f"[组件] {comp_name} — {declaration}")
+            json_results.append({
+                "component": comp_name,
+                "kind": "component",
+                "name": comp_name,
+                "file": "",
+                "line": 0,
+                "declaration": declaration,
+                "comment_preview": "",
+            })
+            return
+
+        if comment_preview:
+            text_results.append(
+                f"[{comp_name}] {kind_label} **{name}**\n"
+                f"  {declaration}\n"
+                f"  📄 {file}:{line}\n"
+                f"  💬 {comment_preview}"
+            )
+        else:
+            text_results.append(
+                f"[{comp_name}] {kind_label} **{name}**\n"
+                f"  {declaration}\n"
+                f"  📄 {file}:{line}"
+            )
+
+        json_results.append({
+            "component": comp_name,
+            "kind": kind_label,
+            "name": name,
+            "file": file,
+            "line": int(line or 0),
+            "declaration": declaration,
+            "comment_preview": comment_preview,
+        })
 
     for comp in index_snapshot.values():
+        if len(json_results) >= limit:
+            break
+
         # 匹配组件名
         if kw in comp['name'].lower():
-            results.append(f"[组件] {comp['name']} — {comp['summary']}")
+            add_hit(comp['name'], None, "component", comp['name'], declaration=(comp.get('summary') or "(无描述)"))
 
         # 匹配 API
         for api in comp['apis']:
+            if len(json_results) >= limit:
+                break
             if kind and api['kind'] != kind:
                 continue
-            if (kw in api['name'].lower() or
-                kw in api['declaration'].lower() or
-                kw in api.get('comment', '').lower()):
-                comment_preview = ''
-                if api.get('comment'):
-                    first_line = api['comment'].split('\n')[0].strip()
-                    comment_preview = f"\n  💬 {first_line}"
-                results.append(
-                    f"[{comp['name']}] {api['kind']} **{api['name']}**\n"
-                    f"  {api['declaration']}\n"
-                    f"  📄 {api['file']}:{api['line']}{comment_preview}"
+            if (
+                kw in api['name'].lower()
+                or kw in api['declaration'].lower()
+                or kw in api.get('comment', '').lower()
+            ):
+                add_hit(
+                    comp['name'],
+                    api,
+                    api['kind'],
+                    api['name'],
+                    declaration=api['declaration'],
+                    file=api['file'],
+                    line=api['line'],
+                    comment=api.get('comment', ''),
                 )
 
-    if not results:
-        return f"未找到与 \"{keyword}\" 相关的结果"
+    if not json_results:
+        return f"未找到与 \"{keyword}\" 相关的结果" if format == "text" else _to_json({"ok": False, "keyword": keyword, "results": [], "truncated": False, "limit": limit})
 
-    limited = results[:50]
-    text = "\n\n".join(limited)
-    if len(results) > 50:
-        text += f"\n\n... 共 {len(results)} 条结果，仅显示前 50 条"
+    truncated = False
+    # We stop searching early once we reach limit; this implies truncation.
+    if len(json_results) >= limit:
+        truncated = True
+
+    if format == "json":
+        return _to_json({"ok": True, "keyword": keyword, "kind": kind, "results": json_results, "truncated": truncated, "limit": limit})
+
+    text = "\n\n".join(text_results)
+    if truncated:
+        text += f"\n\n... 结果较多，仅显示前 {limit} 条（可用 limit 调大，或用 format=\"json\" 做后续自动化）"
     return text
 
 
@@ -745,8 +917,10 @@ def read_source(component_name: str, file: str, start: int = 1, end: int = 0) ->
         return "文件未找到。\n\n可用源文件:\n" + "\n".join(f"  - {f}" for f in source_files[:30])
 
     # 路径安全验证：确保最终路径在允许范围内
-    filepath = os.path.realpath(os.path.join(PODS_DIR, component_name, match))
-    allowed_base = os.path.realpath(os.path.join(PODS_DIR, component_name))
+    comp_dir = comp.get('dir') or component_name
+
+    filepath = os.path.realpath(os.path.join(PODS_DIR, comp_dir, match))
+    allowed_base = os.path.realpath(os.path.join(PODS_DIR, comp_dir))
     if not filepath.startswith(allowed_base + os.sep) and filepath != allowed_base:
         return "错误：禁止访问此路径"
     
@@ -982,7 +1156,7 @@ def find_usage_example(component_name: str) -> str:
     for other_name, other_comp in index_snapshot.items():
         if other_name == component_name:
             continue
-        other_dir = os.path.join(PODS_DIR, other_name)
+        other_dir = os.path.join(PODS_DIR, other_comp.get('dir') or other_name)
         source_files = [f for f in other_comp.get('files', []) if is_source_file(f)]
 
         for rel in source_files:

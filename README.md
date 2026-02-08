@@ -58,8 +58,9 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
 | 工具 | 说明 |
 |------|------|
 | `list_components` | 列出所有已索引组件及统计信息 |
-| `search_component(keyword, kind?)` | 搜索符号、声明、注释（模糊匹配） |
+| `search_component(keyword, kind?, format?, limit?)` | 搜索符号、声明、注释（模糊匹配；支持 `format=json` 便于 agent 解析） |
 | `get_component_api(component_name)` | 获取组件完整公开 API（按文件分组） |
+| `get_tool_docs(tool_name?, format?)` | 返回工具详细说明与最佳实践（推荐 agent 首次接入先调用） |
 | `get_class_detail(component_name, classname)` | 类视图：定义、属性、公开/内部方法 |
 | `read_source(component_name, file, start?, end?)` | 按行读取源码（支持模糊文件名） |
 | `find_usage_example(component_name)` | 搜索其他组件中的使用示例 |
@@ -178,6 +179,7 @@ MCP_API_KEYS="key1,key2" python mcp_server.py --http
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `IOS_PODS_DIR` | 组件库根目录 | 当前目录 |
+| `IOS_PODS_INCLUDE` | 仅索引指定组件（逗号分隔，适合 smoke test，避免索引过大） | 无 |
 | `IOS_PODS_CACHE_DIR` | 缓存目录 | 脚本旁 `.cache/` |
 | `IOS_PODS_KEYS_FILE` | API Key 文件路径 | 脚本旁 `.api-keys` |
 | `IOS_PODS_MIXUP_MARKER` | 业务组件过滤标记 | `SUPPORT_MIXUP` |
