@@ -59,6 +59,7 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
 |------|------|
 | `list_components` | 列出所有已索引组件及统计信息 |
 | `search_component(keyword, kind?, format?, limit?)` | 搜索符号、声明、注释（模糊匹配；支持 `format=json` 便于 agent 解析） |
+| `audit_component_api_quality(component_name?, format?, limit?)` | 输出 API 质量清单（缺注释/可疑命名等；只读） |
 | `get_component_api(component_name)` | 获取组件完整公开 API（按文件分组） |
 | `get_tool_docs(tool_name?, format?)` | 返回工具详细说明与最佳实践（推荐 agent 首次接入先调用；建议多轮检索兜底避免误判） |
 | `get_class_detail(component_name, classname)` | 类视图：定义、属性、公开/内部方法 |
@@ -68,6 +69,27 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
 | `watch_status` | 查看定时检查状态和更新日志 |
 | `sync_from_config(config_path?)` | 根据配置文件同步组件代码 |
 | `sync_gitlab_group(group_id, ...)` | 🆕 自动发现并同步 GitLab Group 下的基础组件 |
+
+## Agent 检索模板（强烈推荐）
+
+当基础组件 API 命名不规范或注释不齐全时，单次检索很容易误判“没有现成能力”。
+
+推荐做法：多轮小 `limit` 检索（中英混合 + 类名/动词组合），逐步收敛到目标能力。
+
+建议流程（可直接复制到 agent 指令中）：
+
+```text
+1) get_tool_docs(tool_name="search_component", format="json")
+2) search_component(format="json", limit=5) x N 次（N>=3，必要时 N>=6）
+   - 先类名/类型：UIImage / UIView / CALayer / NSString / NSURLSession
+   - 再语义动词：clip / crop / mask / avatar / radius / border
+   - 再常见关键词：圆角 / corner / round / cache / request
+3) 如果结果偏离（例如 corner 命中大量 UIView 圆角），追加更定向词：clip / mask / imageWith / tm_
+4) 仅在命中明确 file:line 后，再小范围 read_source（例如 30 行）验证
+```
+
+一个典型的“圆角头像/图片裁剪”检索组合：
+- `UIImage` -> `clip` -> `tm_clipImage` -> `corner`
 
 ## 配置文件同步组件
 

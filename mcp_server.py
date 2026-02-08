@@ -569,6 +569,7 @@ def get_tool_docs(tool_name: str = "", format: str = "text") -> str:
     tools = {
         "list_components": list_components,
         "search_component": search_component,
+        "audit_component_api_quality": audit_component_api_quality,
         "get_component_api": get_component_api,
         "get_class_detail": get_class_detail,
         "read_source": read_source,
@@ -752,6 +753,158 @@ def search_component(keyword: str, kind: str = "", format: str = "text", limit: 
     if truncated:
         text += f"\n\n... 结果较多，仅显示前 {limit} 条（可用 limit 调大，或用 format=\"json\" 做后续自动化）"
     return text
+
+
+def _looks_suspicious_name(name: str) -> str:
+    """Return non-empty reason if a symbol name looks suspicious.
+
+    Heuristics are intentionally simple: we only want to surface candidates,
+    not enforce a hard style.
+    """
+    n = (name or "").strip()
+    if not n:
+        return "empty"
+
+    # Too short or generic
+    if len(n) <= 2:
+        return "too_short"
+    if n.lower() in {"do", "run", "test", "tmp", "temp", "aaa"}:
+        return "too_generic"
+
+    # Trailing digits often indicates non-semantic naming (e.g. foo1/foo2)
+    if re.search(r"\d+$", n):
+        return "trailing_digits"
+
+    # Common placeholder patterns
+    if "xxx" in n.lower() or "todo" in n.lower() or "fixme" in n.lower():
+        return "placeholder"
+
+    # ObjC style: method names should not start with uppercase.
+    if n[0].isupper() and "_" not in n:
+        return "starts_with_uppercase"
+
+    return ""
+
+
+@mcp.tool()
+def audit_component_api_quality(component_name: str = "", format: str = "json", limit: int = 200) -> str:
+    """输出组件 API 质量清单（只读，不修改任何代码）。
+
+    用途：当基础组件命名不规范或注释不齐全时，提供一个可量化、可追踪的清单，
+    便于后续补注释/补别名/规范化治理。
+
+    Args:
+        component_name: 可选。为空则审计当前已索引的所有组件；否则只审计指定组件。
+        format: 返回格式，"json" 或 "text"。
+        limit: 最多返回条目数（每个类别独立截断），范围 1-500。
+
+    Returns:
+        - format=json: JSON 字符串（稳定结构，便于自动化/CI 使用）
+        - format=text: 人类可读的摘要
+    """
+    if format not in VALID_FORMATS:
+        return f"错误：无效的 format 值，可选: {', '.join(sorted(VALID_FORMATS))}"
+
+    try:
+        limit = int(limit)
+    except Exception:
+        limit = 200
+    limit = max(1, min(500, limit))
+
+    with INDEX_LOCK:
+        index_snapshot = dict(INDEX)
+
+    if not index_snapshot:
+        return "暂无索引数据。" if format == "text" else _to_json({"ok": False, "error": "empty_index"})
+
+    targets: list[dict] = []
+    if component_name:
+        comp = index_snapshot.get(component_name)
+        if not comp:
+            available = sorted(index_snapshot.keys())
+            return (
+                f"组件 \"{component_name}\" 不存在。可用: {', '.join(available)}"
+                if format == "text"
+                else _to_json({"ok": False, "error": "unknown_component", "component": component_name, "available": available})
+            )
+        targets = [comp]
+    else:
+        targets = list(index_snapshot.values())
+
+    missing_comment: list[dict] = []
+    suspicious_naming: list[dict] = []
+
+    def add_item(dst: list[dict], item: dict):
+        if len(dst) >= limit:
+            return
+        dst.append(item)
+
+    for comp in targets:
+        comp_name = comp.get("name", "")
+        for api in comp.get("apis", []):
+            api_name = api.get("name", "")
+            kind = api.get("kind", "")
+            decl = api.get("declaration", "")
+            file = api.get("file", "")
+            line = int(api.get("line") or 0)
+            comment = (api.get("comment") or "").strip()
+
+            # 1) Missing / weak comments
+            if not comment or len(comment) < 6:
+                add_item(
+                    missing_comment,
+                    {
+                        "component": comp_name,
+                        "kind": kind,
+                        "name": api_name,
+                        "file": file,
+                        "line": line,
+                        "declaration": decl,
+                    },
+                )
+
+            # 2) Suspicious naming
+            reason = _looks_suspicious_name(api_name)
+            if reason:
+                add_item(
+                    suspicious_naming,
+                    {
+                        "component": comp_name,
+                        "kind": kind,
+                        "name": api_name,
+                        "file": file,
+                        "line": line,
+                        "declaration": decl,
+                        "reason": reason,
+                    },
+                )
+
+    payload = {
+        "ok": True,
+        "component": component_name or "*",
+        "limit": limit,
+        "rules": {
+            "missing_comment": "comment 为空或长度 < 6",
+            "suspicious_naming": "启发式命名检查（过短/占位符/尾随数字/首字母大写等）",
+        },
+        "missing_comment": missing_comment,
+        "suspicious_naming": suspicious_naming,
+        "counts": {
+            "missing_comment": len(missing_comment),
+            "suspicious_naming": len(suspicious_naming),
+        },
+    }
+
+    if format == "json":
+        return _to_json(payload)
+
+    lines = [
+        f"审计组件: {payload['component']}",
+        f"missing_comment: {payload['counts']['missing_comment']} 条（最多显示 {limit}）",
+        f"suspicious_naming: {payload['counts']['suspicious_naming']} 条（最多显示 {limit}）",
+        "\n提示：这是候选清单，不是强制规范；建议结合 read_source 小范围确认后再治理。",
+    ]
+    return "\n".join(lines)
 
 
 @mcp.tool()
