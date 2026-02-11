@@ -1,6 +1,6 @@
 # MCP iOS Components Server
 
-[![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)](tests/run_coverage.sh)
+[![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)](tests/run_coverage.sh)
 
 [English](#english) | 中文
 
@@ -16,6 +16,26 @@ iOS CocoaPods 组件库 MCP Server，帮助 AI 编码助手发现和复用已有
 - **HTTP 模式 + API Key 鉴权** — 部署到云端，团队共享
 - **按行读取源码** — 只读需要的行，节省 token
 - **按类聚合视图** — 一览类定义、属性、公开/内部方法
+
+## 架构与目录（轻量分层）
+
+```text
+mcp_server.py                 # 兼容入口（CLI + import 兼容）
+mcp_app/
+  bootstrap.py               # 组装层：MCP tools、main、全局运行态
+  config.py                  # 配置与 access_control 加载
+  models.py                  # 常量与状态模型
+  access_control.py          # 访问控制导出
+  state.py                   # AppState 导出
+  indexing/                  # 发现、解析、索引构建
+  services/                  # 查询/源码读取/同步/更新服务
+  integrations/              # git、gitlab、apikey 集成
+  transport/                 # 预留传输层拆分
+```
+
+说明：
+- 对外接口保持不变：`python mcp_server.py ...` 与 MCP 工具签名兼容。
+- `mcp_server.py` 仅负责兼容入口，核心逻辑在 `mcp_app/` 分层维护。
 
 ## 快速开始
 
@@ -271,6 +291,26 @@ MCP Server for querying iOS CocoaPods component APIs. Helps AI coding assistants
 - **HTTP mode + API Key auth** — deploy to cloud, share with team
 - **Line-range source reading** — read only the lines you need, saves tokens
 - **Per-class aggregated view** — see class definition, properties, public/private methods at a glance
+
+## Architecture (Lightweight Layering)
+
+```text
+mcp_server.py                 # Compatibility entrypoint (CLI + import compatibility)
+mcp_app/
+  bootstrap.py               # Composition layer: MCP tools, main, runtime globals
+  config.py                  # Config and access_control loading
+  models.py                  # Constants and state model
+  access_control.py          # Access-control exports
+  state.py                   # AppState export
+  indexing/                  # Discovery, parsing, index building
+  services/                  # Query/source/sync/update services
+  integrations/              # git, gitlab, apikey integrations
+  transport/                 # Reserved for transport extraction
+```
+
+Notes:
+- Public behavior is unchanged: `python mcp_server.py ...` and MCP tool signatures remain compatible.
+- `mcp_server.py` is now compatibility-only; core logic is maintained in `mcp_app/`.
 
 ## Quick Start
 

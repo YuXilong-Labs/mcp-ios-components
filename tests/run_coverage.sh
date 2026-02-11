@@ -12,5 +12,5 @@ fi
 cd "$ROOT_DIR"
 
 "$PY" -m coverage erase
-"$PY" -m coverage run --source=mcp_server -m unittest discover -s tests -p 'test_*.py'
+"$PY" -m coverage run --source=mcp_server,mcp_app -m unittest discover -s tests -p 'test_*.py'
 "$PY" -m coverage report -m --fail-under=98
