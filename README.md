@@ -1,5 +1,7 @@
 # MCP iOS Components Server
 
+[![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen)](tests/run_coverage.sh)
+
 [English](#english) | 中文
 
 iOS CocoaPods 组件库 MCP Server，帮助 AI 编码助手发现和复用已有代码，避免重复造轮子。
@@ -117,9 +119,31 @@ components:
   BTNetwork:
     repo: git@gitlab.com:ios/BTNetwork.git
     branch: develop  # 指定分支
+
+access_control:
+  exclude_from_index:
+    - BTRtcEngine
+  api_only:
+    - BTCryptoKit
+    - BTEncryptKit
 ```
 
 也可以通过 MCP 工具 `sync_from_config` 在运行时触发同步。
+
+## 访问控制配置（核心组件保护）
+
+在 `components.yaml` 里可配置 `access_control`：
+
+- `exclude_from_index`：组件完全不进入 MCP 索引（`list/search` 不可见）
+- `api_only`：仅允许 `search_component/get_component_api/get_class_detail`，拒绝 `read_source/find_usage_example`
+
+规则：
+- 名称匹配大小写不敏感，支持写 pod 名或目录名
+- `exclude_from_index` 优先级高于 `api_only`
+- 默认兜底：`BTRtcEngine` 始终会被排除（即使未配置）
+
+生效方式：
+- 修改 `components.yaml` 后执行 `refresh_index` 或重启服务
 
 ## GitLab Group 自动发现
 
@@ -202,6 +226,7 @@ MCP_API_KEYS="key1,key2" python mcp_server.py --http
 |------|------|--------|
 | `IOS_PODS_DIR` | 组件库根目录 | 当前目录 |
 | `IOS_PODS_INCLUDE` | 仅索引指定组件（逗号分隔；适合 smoke test；建议用于多轮检索兜底） | 无 |
+| `IOS_PODS_CONFIG` | 组件配置文件路径（用于 `components` 与 `access_control`） | `components.yaml` |
 | `IOS_PODS_CACHE_DIR` | 缓存目录 | 脚本旁 `.cache/` |
 | `IOS_PODS_KEYS_FILE` | API Key 文件路径 | 脚本旁 `.api-keys` |
 | `IOS_PODS_MIXUP_MARKER` | 业务组件过滤标记 | `SUPPORT_MIXUP` |
@@ -212,7 +237,11 @@ MCP_API_KEYS="key1,key2" python mcp_server.py --http
 
 ## 组件发现机制
 
-Server 自动扫描组件目录中包含 `.podspec` 的子目录。podspec 中含有 `SUPPORT_MIXUP` 标记的组件会被过滤（可通过 `IOS_PODS_MIXUP_MARKER` 配置）。
+Server 自动扫描组件目录中包含 `.podspec` 的子目录。默认过滤规则包括：
+
+- podspec 中存在非空 `SUPPORT_MIXUP` / `BETA_SUPPORT_MIXUP`
+- `access_control.exclude_from_index` 命中的组件
+- 默认安全兜底：`BTRtcEngine`
 
 ## 缓存机制
 
@@ -296,6 +325,31 @@ Edit `AGENTS.md` to fill in your project-specific component table. Claude Code w
 | `sync_from_config(config_path?)` | Sync components from config file |
 | `sync_gitlab_group(group_id, ...)` | 🆕 Auto-discover and sync base components from GitLab Group |
 
+## Access Control (Protect Sensitive Components)
+
+Configure `access_control` in `components.yaml`:
+
+```yaml
+components:
+  BTBaseKit: git@gitlab.com:ios/BTBaseKit.git
+
+access_control:
+  exclude_from_index:
+    - BTRtcEngine
+  api_only:
+    - BTCryptoKit
+    - BTEncryptKit
+```
+
+Behavior:
+- `exclude_from_index`: component is fully removed from MCP index (`list/search` cannot see it)
+- `api_only`: allow `search_component/get_component_api/get_class_detail`, deny `read_source/find_usage_example`
+- Name matching is case-insensitive and accepts either pod name or directory name
+- Priority: `exclude_from_index` overrides `api_only`
+- Safety default: `BTRtcEngine` is always excluded even without config
+
+Apply changes by running `refresh_index` (or restarting server).
+
 ## GitLab Group Auto-Discovery
 
 Automatically scan all repos under a GitLab Group and sync base components:
@@ -356,6 +410,8 @@ MCP_API_KEYS="key1,key2" python mcp_server.py --http
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `IOS_PODS_DIR` | Path to pods directory | Current directory |
+| `IOS_PODS_INCLUDE` | Only index specific components (comma-separated; useful for smoke tests) | (none) |
+| `IOS_PODS_CONFIG` | Components config path (for `components` + `access_control`) | `components.yaml` |
 | `IOS_PODS_CACHE_DIR` | Cache directory | `.cache/` next to script |
 | `IOS_PODS_KEYS_FILE` | API keys file path | `.api-keys` next to script |
 | `IOS_PODS_MIXUP_MARKER` | Marker to filter business components | `SUPPORT_MIXUP` |
@@ -365,7 +421,11 @@ MCP_API_KEYS="key1,key2" python mcp_server.py --http
 
 ## Component Discovery
 
-The server automatically discovers components by scanning the pods directory for subdirectories containing `.podspec` files. Components with `SUPPORT_MIXUP` marker in their podspec are filtered out (configurable via `IOS_PODS_MIXUP_MARKER`).
+The server scans subdirectories with `.podspec` files and applies default filters:
+
+- Non-empty `SUPPORT_MIXUP` / `BETA_SUPPORT_MIXUP` in podspec
+- Components matched by `access_control.exclude_from_index`
+- Safety default component: `BTRtcEngine`
 
 ## Caching
 

@@ -45,6 +45,11 @@ KEYS_FILE = os.environ.get("IOS_PODS_KEYS_FILE", os.path.join(os.path.dirname(os
 MIXUP_MARKER = os.environ.get("IOS_PODS_MIXUP_MARKER", "SUPPORT_MIXUP")
 WEBHOOK_SECRET = os.environ.get("IOS_PODS_WEBHOOK_SECRET", "")
 WATCH_INTERVAL = int(os.environ.get("IOS_PODS_WATCH_INTERVAL", "0"))  # 秒, 0=禁用
+COMPONENTS_CONFIG_FILE = os.environ.get("IOS_PODS_CONFIG", "components.yaml")
+DEFAULT_EXCLUDE_COMPONENTS = {"btrtcengine"}
+ACCESS_MODE_FULL = "full"
+ACCESS_MODE_API_ONLY = "api_only"
+API_ONLY_DENY_MESSAGE = "该组件已配置为 API 可见模式，禁止读取实现细节"
 
 # 运行时赋值
 PODS_DIR = DEFAULT_PODS_DIR
@@ -53,6 +58,69 @@ INDEX_LOCK = threading.Lock()
 LAST_HASH: str = ""
 WATCH_LOG: list = []  # 最近的更新日志
 WATCH_LOG_MAX = 50
+
+
+def _resolve_config_path(config_path: str) -> str:
+    """将相对配置路径解析为脚本目录下的绝对路径。"""
+    if not config_path:
+        config_path = COMPONENTS_CONFIG_FILE
+    if os.path.isabs(config_path):
+        return config_path
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), config_path)
+
+
+def normalize_component_name(name: str) -> str:
+    """组件名归一化：去空白 + 小写。"""
+    return (name or "").strip().lower()
+
+
+def _extract_pod_name_from_podspec_content(content: str, fallback: str) -> str:
+    """从 podspec 文本中提取 pod 名称。"""
+    m = re.search(r"\.name\s*=\s*['\"](.+?)['\"]", content)
+    return m.group(1).strip() if m else fallback
+
+
+def load_access_control(config_path: str = "") -> dict:
+    """加载访问控制配置。
+
+    Returns:
+        {
+            "exclude_from_index": set[str],  # 归一化后组件名（目录名或 pod 名）
+            "api_only": set[str],            # 归一化后组件名（目录名或 pod 名）
+            "config_path": str,
+        }
+    """
+    resolved = _resolve_config_path(config_path)
+    config = load_components_config(resolved)
+
+    exclude_set = set(DEFAULT_EXCLUDE_COMPONENTS)
+    api_only_set = set()
+    access = config.get("access_control", {}) if isinstance(config, dict) else {}
+
+    if isinstance(access, dict):
+        exclude_items = access.get("exclude_from_index", [])
+        api_only_items = access.get("api_only", [])
+
+        if isinstance(exclude_items, list):
+            for item in exclude_items:
+                norm = normalize_component_name(str(item))
+                if norm:
+                    exclude_set.add(norm)
+
+        if isinstance(api_only_items, list):
+            for item in api_only_items:
+                norm = normalize_component_name(str(item))
+                if norm:
+                    api_only_set.add(norm)
+
+    # exclude 优先级高于 api_only
+    api_only_set -= exclude_set
+
+    return {
+        "exclude_from_index": exclude_set,
+        "api_only": api_only_set,
+        "config_path": resolved,
+    }
 
 mcp = FastMCP("ios-components", instructions="""iOS 组件库代码索引 — 复用优先，拒绝重复造轮子。
 
@@ -101,7 +169,7 @@ find_usage_example(组件名) — 查看其他组件如何 import 和使用，�
 # 组件发现 & 索引构建
 # ============================================================
 
-def discover_components(pods_dir: str, return_filtered: bool = False) -> set | tuple:
+def discover_components(pods_dir: str, return_filtered: bool = False, access_control: dict | None = None) -> set | tuple:
     """自动发现基础组件：扫描含 .podspec 的目录
     
     判定规则：
@@ -123,6 +191,11 @@ def discover_components(pods_dir: str, return_filtered: bool = False) -> set | t
     """
     components = set()
     filtered = {}  # {组件名: mixup声明内容}
+    filtered_by_policy = {}  # {目录名: 策略原因}
+
+    access = access_control or load_access_control()
+    exclude_set = access.get("exclude_from_index", set())
+    api_only_set = access.get("api_only", set())
 
     # Optional allowlist for safe/fast smoke tests.
     # Example: IOS_PODS_INCLUDE="BTBaseKit,BTNetwork"
@@ -131,7 +204,7 @@ def discover_components(pods_dir: str, return_filtered: bool = False) -> set | t
     include_set_lower = {x.lower() for x in include_set}
     
     if not os.path.exists(pods_dir):
-        return (components, filtered) if return_filtered else components
+        return (components, filtered, filtered_by_policy) if return_filtered else components
     
     for entry in os.listdir(pods_dir):
         if include_set and entry.lower() not in include_set_lower:
@@ -144,6 +217,7 @@ def discover_components(pods_dir: str, return_filtered: bool = False) -> set | t
             continue
         with open(os.path.join(entry_path, specs[0]), encoding='utf-8', errors='ignore') as spec_file:
             spec_content = spec_file.read()
+        pod_name = _extract_pod_name_from_podspec_content(spec_content, entry)
         
         has_nonempty_mixup = False  # 是否有非空的 MIXUP 声明
         mixup_values = []  # 记录 MIXUP 声明内容
@@ -166,11 +240,18 @@ def discover_components(pods_dir: str, return_filtered: bool = False) -> set | t
                         has_nonempty_mixup = True
         
         if not has_nonempty_mixup:
-            components.add(entry)
+            entry_norm = normalize_component_name(entry)
+            pod_norm = normalize_component_name(pod_name)
+            if entry_norm in exclude_set or pod_norm in exclude_set:
+                filtered_by_policy[entry] = f"exclude_from_index ({pod_name})"
+            else:
+                components.add(entry)
+                if entry_norm in api_only_set or pod_norm in api_only_set:
+                    filtered_by_policy[entry] = f"api_only ({pod_name})"
         else:
             filtered[entry] = mixup_values
     
-    return (components, filtered) if return_filtered else components
+    return (components, filtered, filtered_by_policy) if return_filtered else components
 
 
 def walk_dir(directory: str, skip_dirs: set = None) -> list:
@@ -355,9 +436,12 @@ def extract_apis(file_path: str, rel_path: str) -> list:
     return apis
 
 
-def compute_hash(pods_dir: str, components: set) -> str:
+def compute_hash(pods_dir: str, components: set, access_control: dict | None = None) -> str:
     """基于文件列表 + mtime 计算 hash"""
+    access = access_control or load_access_control()
     h = hashlib.sha256()
+    h.update(f"exclude:{','.join(sorted(access.get('exclude_from_index', set())))}\n".encode())
+    h.update(f"api_only:{','.join(sorted(access.get('api_only', set())))}\n".encode())
     for name in sorted(components):
         comp_dir = os.path.join(pods_dir, name)
         if not os.path.exists(comp_dir):
@@ -375,7 +459,16 @@ def compute_hash(pods_dir: str, components: set) -> str:
 
 def build_index(pods_dir: str) -> dict:
     """构建或加载索引（带缓存）"""
-    components, filtered = discover_components(pods_dir, return_filtered=True)
+    access = load_access_control()
+    components, filtered_mixup, filtered_by_policy = discover_components(
+        pods_dir, return_filtered=True, access_control=access
+    )
+    api_only_entries = sorted(
+        name for name, reason in filtered_by_policy.items() if reason.startswith("api_only")
+    )
+    excluded_entries = {
+        name: reason for name, reason in filtered_by_policy.items() if reason.startswith("exclude_from_index")
+    }
     
     # 输出组件分类信息
     print(f"\n[mcp-ios] ========== 组件分类 ==========", file=sys.stderr)
@@ -383,17 +476,25 @@ def build_index(pods_dir: str) -> dict:
     for name in sorted(components):
         print(f"    {name}", file=sys.stderr)
     
-    print(f"\n[mcp-ios] ❌ 非基础组件 - 已过滤 ({len(filtered)} 个):", file=sys.stderr)
-    for name in sorted(filtered.keys()):
-        mixup_info = " | ".join(filtered[name])
+    print(f"\n[mcp-ios] ❌ 非基础组件 - 已过滤 ({len(filtered_mixup)} 个):", file=sys.stderr)
+    for name in sorted(filtered_mixup.keys()):
+        mixup_info = " | ".join(filtered_mixup[name])
         print(f"    {name}: {mixup_info}", file=sys.stderr)
+
+    print(f"\n[mcp-ios] 🔒 访问控制 - 排除索引 ({len(excluded_entries)} 个):", file=sys.stderr)
+    for name in sorted(excluded_entries.keys()):
+        print(f"    {name}: {excluded_entries[name]}", file=sys.stderr)
+
+    print(f"\n[mcp-ios] 🔐 访问控制 - API 可见模式 ({len(api_only_entries)} 个):", file=sys.stderr)
+    for name in api_only_entries:
+        print(f"    {name}", file=sys.stderr)
     print(f"[mcp-ios] ==================================\n", file=sys.stderr)
     
     if not components:
         print(f"[mcp-ios] 未在 {pods_dir} 发现组件", file=sys.stderr)
         return {}
 
-    current_hash = compute_hash(pods_dir, components)
+    current_hash = compute_hash(pods_dir, components, access)
     cache_path = os.path.join(CACHE_DIR, 'index.json')
 
     # 尝试加载缓存
@@ -414,6 +515,13 @@ def build_index(pods_dir: str) -> dict:
         try:
             spec = parse_podspec(comp_dir, dir_name)
             pod_name = spec.get('pod_name') or dir_name
+            entry_norm = normalize_component_name(dir_name)
+            pod_norm = normalize_component_name(pod_name)
+            access_mode = (
+                ACCESS_MODE_API_ONLY
+                if (entry_norm in access.get("api_only", set()) or pod_norm in access.get("api_only", set()))
+                else ACCESS_MODE_FULL
+            )
 
             all_files = walk_dir(comp_dir)
             source_files = [f for f in all_files if is_source_file(f)]
@@ -432,8 +540,12 @@ def build_index(pods_dir: str) -> dict:
                 'apis': apis,
                 'files': all_files,
                 'source_count': len(source_files),
+                'access_mode': access_mode,
             }
-            print(f"  ✓ {pod_name} ({dir_name}): {len(apis)} APIs, {len(source_files)} 源文件", file=sys.stderr)
+            print(
+                f"  ✓ {pod_name} ({dir_name}): {len(apis)} APIs, {len(source_files)} 源文件, 访问={access_mode}",
+                file=sys.stderr,
+            )
         except Exception as e:
             print(f"  ✗ {dir_name}: {e}", file=sys.stderr)
 
@@ -619,6 +731,36 @@ VALID_FORMATS = {"text", "json"}
 def _to_json(data) -> str:
     """Serialize as JSON string (stable output for agents)."""
     return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _get_component_from_snapshot(index_snapshot: dict, component_name: str) -> Optional[dict]:
+    """按组件名或目录名（大小写不敏感）从索引快照中获取组件。"""
+    comp = index_snapshot.get(component_name)
+    if comp:
+        return comp
+
+    target = normalize_component_name(component_name)
+    if not target:
+        return None
+
+    for candidate in index_snapshot.values():
+        if target in {
+            normalize_component_name(candidate.get("name", "")),
+            normalize_component_name(candidate.get("dir", "")),
+        }:
+            return candidate
+    return None
+
+
+def is_api_only_component(component_name: str, comp: Optional[dict] = None) -> bool:
+    """判断组件是否处于 API 可见模式。"""
+    if comp is not None:
+        return comp.get("access_mode") == ACCESS_MODE_API_ONLY
+
+    with INDEX_LOCK:
+        index_snapshot = dict(INDEX)
+    found = _get_component_from_snapshot(index_snapshot, component_name)
+    return bool(found and found.get("access_mode") == ACCESS_MODE_API_ONLY)
 
 @mcp.tool()
 def search_component(keyword: str, kind: str = "", format: str = "text", limit: int = 50) -> str:
@@ -1043,9 +1185,13 @@ def read_source(component_name: str, file: str, start: int = 1, end: int = 0) ->
     if '..' in file or file.startswith('/') or '..' in component_name:
         return "错误：非法路径"
     
-    comp = INDEX.get(component_name)
+    with INDEX_LOCK:
+        index_snapshot = dict(INDEX)
+    comp = _get_component_from_snapshot(index_snapshot, component_name)
     if not comp:
         return "组件不存在"  # 不暴露具体组件名
+    if is_api_only_component(component_name, comp):
+        return API_ONLY_DENY_MESSAGE
 
     # 精确匹配 → 后缀匹配 → 模糊匹配（仅在已索引文件列表中查找）
     fn_lower = file.lower()
@@ -1295,8 +1441,13 @@ def find_usage_example(component_name: str) -> str:
     with INDEX_LOCK:
         index_snapshot = dict(INDEX)
     
-    if component_name not in index_snapshot:
+    comp = _get_component_from_snapshot(index_snapshot, component_name)
+    if not comp:
         return f"\"{component_name}\" 不在已索引组件中。"
+    if is_api_only_component(component_name, comp):
+        return API_ONLY_DENY_MESSAGE
+
+    component_name = comp.get("name", component_name)
 
     import_patterns = [
         f'import {component_name}',
@@ -1546,8 +1697,6 @@ REINDEX_LOCK = threading.Lock()  # reindex 并发锁
 # ============================================================
 # 组件配置同步
 # ============================================================
-
-COMPONENTS_CONFIG_FILE = os.environ.get("IOS_PODS_CONFIG", "components.yaml")
 
 def load_components_config(config_path: str) -> dict:
     """加载组件配置文件（YAML 或 JSON）"""

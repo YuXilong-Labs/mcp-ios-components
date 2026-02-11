@@ -33,6 +33,27 @@ class TestFindUsageExampleEdges(unittest.TestCase):
         # We only assert it returns a string and does not crash.
         self.assertTrue(isinstance(out, str) and len(out) > 0)
 
+    def test_find_usage_example_api_only_denied_and_alias(self):
+        s = self._server()
+        with s.INDEX_LOCK:
+            s.PODS_DIR = "/tmp"
+            s.INDEX = {
+                "BTBaseKit": {
+                    "name": "BTBaseKit",
+                    "dir": "btbasekit",
+                    "summary": "",
+                    "description": "",
+                    "podspec": "",
+                    "files": [],
+                    "source_count": 0,
+                    "apis": [],
+                    "access_mode": s.ACCESS_MODE_API_ONLY,
+                }
+            }
+
+        out = s.find_usage_example("btbasekit")
+        self.assertEqual(out, s.API_ONLY_DENY_MESSAGE)
+
 
 if __name__ == "__main__":
     unittest.main()

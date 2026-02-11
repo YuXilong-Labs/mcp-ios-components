@@ -1,0 +1,6 @@
+[run]
+source = mcp_server
+
+[report]
+exclude_lines =
+    if __name__ == .__main__.:

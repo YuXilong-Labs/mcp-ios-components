@@ -59,6 +59,44 @@ class TestSyncInputValidation(unittest.TestCase):
         self.assertIn("未配置 GitLab Token", out)
         self.assertEqual(called["count"], 0)
 
+    def test_sync_from_config_success_and_reindex(self):
+        s = self._server()
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg = os.path.join(d, "components.yaml")
+            with open(cfg, "w", encoding="utf-8") as f:
+                f.write("components:\\n  A: git@x:a.git\\n")
+
+            os.makedirs(s.CACHE_DIR, exist_ok=True)
+            cache_path = os.path.join(s.CACHE_DIR, "index.json")
+            with open(cache_path, "w", encoding="utf-8") as f:
+                f.write("x")
+
+            with s.INDEX_LOCK:
+                s.PODS_DIR = d
+                s.INDEX = {}
+
+            with unittest.mock.patch.object(
+                s, "sync_components", return_value=[{"name": "A", "status": "cloned", "message": "ok"}]
+            ), unittest.mock.patch.object(s, "build_index", return_value={"A": {}}), unittest.mock.patch.object(
+                s, "discover_components", return_value={"A"}
+            ), unittest.mock.patch.object(s, "compute_hash", return_value="h"):
+                out = s.sync_from_config(cfg)
+
+            self.assertIn("组件同步结果", out)
+            self.assertIn("索引已更新", out)
+            self.assertFalse(os.path.exists(cache_path))
+
+    def test_sync_from_config_no_results(self):
+        s = self._server()
+        with tempfile.TemporaryDirectory() as d:
+            cfg = os.path.join(d, "components.yaml")
+            with open(cfg, "w", encoding="utf-8") as f:
+                f.write("components:\\n  A: git@x:a.git\\n")
+            with unittest.mock.patch.object(s, "sync_components", return_value=[]):
+                out = s.sync_from_config(cfg)
+            self.assertIn("无组件需要同步", out)
+
 
 if __name__ == "__main__":
     unittest.main()

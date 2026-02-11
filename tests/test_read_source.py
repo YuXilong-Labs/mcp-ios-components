@@ -78,6 +78,41 @@ class TestReadSource(unittest.TestCase):
             out = s.read_source("BTBaseKit", "BTExtension", start=1, end=1)
             self.assertIn("UIImage+BTExtension.h", out)
 
+    def test_read_source_api_only_and_alias_component_name(self):
+        s = self._server()
+
+        with tempfile.TemporaryDirectory() as d:
+            comp_dir = os.path.join(d, "BTBaseKitDir")
+            os.makedirs(os.path.join(comp_dir, "Sub"), exist_ok=True)
+            with open(os.path.join(comp_dir, "Sub", "Foo.h"), "w", encoding="utf-8") as f:
+                f.write("// header\\n")
+
+            with s.INDEX_LOCK:
+                s.PODS_DIR = d
+                s.INDEX = {
+                    "BTBaseKit": {
+                        "name": "BTBaseKit",
+                        "dir": "BTBaseKitDir",
+                        "podspec": "BTBaseKit.podspec",
+                        "summary": "",
+                        "description": "",
+                        "files": ["Sub/Foo.h"],
+                        "source_count": 1,
+                        "apis": [],
+                        "access_mode": s.ACCESS_MODE_API_ONLY,
+                    }
+                }
+
+            denied = s.read_source("btbasekitdir", "Foo.h", start=1, end=1)
+            self.assertEqual(denied, s.API_ONLY_DENY_MESSAGE)
+
+            with s.INDEX_LOCK:
+                s.INDEX["BTBaseKit"]["access_mode"] = s.ACCESS_MODE_FULL
+
+            out = s.read_source("btbasekitdir", "Foo.h", start=1, end=1)
+            self.assertIn("Foo.h", out)
+            self.assertIn("header", out)
+
 
 if __name__ == "__main__":
     unittest.main()

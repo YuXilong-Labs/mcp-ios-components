@@ -102,4 +102,23 @@ get_class_detail(组件名, 类名) → 查看具体实现 →
 
 ---
 
+## 🔐 敏感组件访问控制（推荐）
+
+若某些组件禁止被外部 MCP 用户读取实现，可在 `components.yaml` 配置：
+
+```yaml
+access_control:
+  exclude_from_index:
+    - BTRtcEngine      # 完全不进入索引
+  api_only:
+    - BTCryptoKit      # 可搜索 API，不可 read_source/find_usage_example
+```
+
+说明：
+- `exclude_from_index`：组件不会出现在 `list_components/search_component`
+- `api_only`：允许 `search/get_component_api/get_class_detail`，拒绝 `read_source/find_usage_example`
+- 修改配置后执行 `refresh_index`（或重启服务）生效
+
+---
+
 *此文件由 mcp-ios-components 提供，根据项目需要自定义。*

@@ -24,6 +24,19 @@ components:
     repo: https://gitlab.example.com/ios/BTLogger.git
     branch: main
 
+# 组件访问控制（可选）
+# - exclude_from_index: 从 MCP 索引完全排除（不会出现在 list/search）
+# - api_only: 仅暴露 API 检索能力，禁止 read_source / find_usage_example
+# 说明：
+# - 名称匹配大小写不敏感，支持写 pod 名或目录名
+# - exclude_from_index 优先级高于 api_only
+access_control:
+  exclude_from_index:
+    - BTRtcEngine
+  api_only:
+    - BTCryptoKit
+    - BTEncryptKit
+
 # 说明：
 # - 组件会被克隆到 pods_dir/<component_name> 目录
 # - 已存在的组件会执行 git pull 更新

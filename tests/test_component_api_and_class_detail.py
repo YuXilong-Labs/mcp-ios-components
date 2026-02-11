@@ -91,6 +91,31 @@ class TestComponentApiAndClassDetail(unittest.TestCase):
         out = s.get_class_detail("BTBaseKit", "Nope")
         self.assertIn("未找到类", out)
 
+    def test_get_class_detail_missing_component_and_private_methods(self):
+        s = self._server()
+        out = s.get_class_detail("NoComp", "Foo")
+        self.assertIn("不存在", out)
+
+        apis = [
+            {"kind": "class", "name": "Foo", "declaration": "class Foo", "file": "Foo.m", "line": 1, "comment": ""},
+            {"kind": "func", "name": "inner", "declaration": "func inner()", "file": "Foo.m", "line": 2, "comment": ""},
+        ]
+        with s.INDEX_LOCK:
+            s.INDEX = {
+                "X": {
+                    "name": "X",
+                    "dir": "X",
+                    "summary": "",
+                    "description": "",
+                    "podspec": "",
+                    "files": [],
+                    "source_count": 0,
+                    "apis": apis,
+                }
+            }
+        out2 = s.get_class_detail("X", "Foo")
+        self.assertIn("内部方法", out2)
+
 
 if __name__ == "__main__":
     unittest.main()
