@@ -37,6 +37,8 @@
   - `trigger-positive.jsonl`
   - `trigger-negative.jsonl`
   - `functional-cases.md`
+  - `run_eval.py`（指标计算与门禁脚本）
+- CI 模板：`.github/workflows/skills-eval.yml`
 
 ## 验收建议
 

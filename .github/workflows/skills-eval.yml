@@ -1,0 +1,38 @@
+name: skills-eval
+
+on:
+  pull_request:
+    paths:
+      - "skills/**"
+      - ".github/workflows/skills-eval.yml"
+  workflow_dispatch:
+
+jobs:
+  skills-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate eval datasets
+        run: |
+          python3 skills/evals/run_eval.py --allow-missing-results
+
+      - name: Run metrics gate (when results file exists)
+        run: |
+          if [ -f skills/evals/results/latest.jsonl ]; then
+            python3 skills/evals/run_eval.py \
+              --results skills/evals/results/latest.jsonl \
+              --assert-thresholds \
+              --min-trigger-accuracy 0.90 \
+              --max-false-trigger-rate 0.10 \
+              --min-evidence-completeness 0.95 \
+              --max-block-miss-rate 0.05
+          else
+            echo "skills/evals/results/latest.jsonl 不存在，跳过门禁（仅做数据集校验）"
+          fi
