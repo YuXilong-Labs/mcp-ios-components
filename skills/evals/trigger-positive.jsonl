@@ -6,3 +6,23 @@
 {"id":"p6","input":"这个需求是否需要新增组件？先做选型评估","expect_trigger":"ios-component-selection"}
 {"id":"p7","input":"把业务里的自定义弹窗统一替换成基础 UI 组件","expect_trigger":"ios-component-migration"}
 {"id":"p8","input":"审查下这次改动有没有重复封装网络层","expect_trigger":"ios-component-review"}
+{"id":"p9","input":"实现一个图片上传+重试功能，按组件化规范开发","expect_trigger":"ios-component-implementation"}
+{"id":"p10","input":"build 一个带空态和分页的 iOS 页面，先查现有组件再写代码","expect_trigger":"ios-component-implementation"}
+{"id":"p11","input":"帮我实现登录接口接入，避免重复封装 HTTP 请求","expect_trigger":"ios-component-implementation"}
+{"id":"p12","input":"用现有组件实现 Toast+刷新列表，直接给代码和复用证据","expect_trigger":"ios-component-implementation"}
+{"id":"p13","input":"这个需求做技术方案评审，评估 refresh/empty/skeleton 组件怎么选","expect_trigger":"ios-component-selection"}
+{"id":"p14","input":"请做 iOS component selection：分页、下拉刷新、空态页面各用什么","expect_trigger":"ios-component-selection"}
+{"id":"p15","input":"先评估是否已有图片裁剪和缓存组件，再决定要不要新增基础库","expect_trigger":"ios-component-selection"}
+{"id":"p16","input":"给一个主方案/备选方案：新页面的路由、列表、弹窗组件选型","expect_trigger":"ios-component-selection"}
+{"id":"p17","input":"把自定义图片下载器迁移到基础图片组件，给我分批替换计划","expect_trigger":"ios-component-migration"}
+{"id":"p18","input":"替换业务自造 Router 到统一路由组件，需要回滚策略","expect_trigger":"ios-component-migration"}
+{"id":"p19","input":"将老的缓存工具和 UserDefaults 封装收敛到基础组件，按批次改","expect_trigger":"ios-component-migration"}
+{"id":"p20","input":"migrate 现有请求层到 XXNetwork，先做映射表再给改造步骤","expect_trigger":"ios-component-migration"}
+{"id":"p21","input":"PR review：新增了自定义图片缓存逻辑，检查是否重复造轮子并给阻塞建议","expect_trigger":"ios-component-review"}
+{"id":"p22","input":"代码审查这个改动，重点看有没有绕过统一 Router 和网络组件","expect_trigger":"ios-component-review"}
+{"id":"p23","input":"发布前做变更审查，列出可复用组件证据和严重级别","expect_trigger":"ios-component-review"}
+{"id":"p24","input":"review 这次 iOS 改动，若发现平行封装请给替换 API 建议","expect_trigger":"ios-component-review"}
+{"id":"p25","input":"先评估这个需求是否已有组件方案，再决定实现方式（今天先做选型）","expect_trigger":"ios-component-selection"}
+{"id":"p26","input":"review 这个 PR 顺便给迁移建议，先按审查结论输出","expect_trigger":"ios-component-review"}
+{"id":"p27","input":"这个页面最终要实现，但第一步先做组件化方案和风险评估","expect_trigger":"ios-component-selection"}
+{"id":"p28","input":"发现自定义网络封装太多，先给迁移计划，不用直接改代码","expect_trigger":"ios-component-migration"}

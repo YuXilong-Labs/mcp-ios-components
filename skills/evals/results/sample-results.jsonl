@@ -1,5 +1,5 @@
-{"id":"p1","actual_trigger":"ios-component-implementation","evidence_complete":true,"should_block":false,"blocked":false,"notes":""}
-{"id":"p2","actual_trigger":"ios-component-selection","evidence_complete":true,"should_block":false,"blocked":false,"notes":""}
-{"id":"p3","actual_trigger":"ios-component-migration","evidence_complete":true,"should_block":false,"blocked":false,"notes":""}
-{"id":"p4","actual_trigger":"ios-component-review","evidence_complete":true,"should_block":true,"blocked":true,"notes":""}
-{"id":"n1","actual_trigger":"none","evidence_complete":null,"should_block":null,"blocked":null,"notes":""}
+{"id":"p1","actual_trigger":"ios-component-implementation","evidence_complete":true,"should_block":false,"blocked":false,"tool_sequence_ok":true,"json_search_used":true,"search_rounds":4,"fallback_handled":true,"output_contract_ok":true,"api_only_handled":null,"notes":""}
+{"id":"p2","actual_trigger":"ios-component-selection","evidence_complete":true,"should_block":false,"blocked":false,"tool_sequence_ok":true,"json_search_used":true,"search_rounds":3,"fallback_handled":true,"output_contract_ok":true,"api_only_handled":null,"notes":""}
+{"id":"p3","actual_trigger":"ios-component-migration","evidence_complete":true,"should_block":false,"blocked":false,"tool_sequence_ok":true,"json_search_used":true,"search_rounds":5,"fallback_handled":true,"output_contract_ok":true,"api_only_handled":false,"notes":"示例：若命中 api_only 但未正确处理，可标 false"}
+{"id":"p4","actual_trigger":"ios-component-review","evidence_complete":true,"should_block":true,"blocked":true,"tool_sequence_ok":true,"json_search_used":true,"search_rounds":3,"fallback_handled":true,"output_contract_ok":true,"api_only_handled":null,"notes":""}
+{"id":"n1","actual_trigger":"none","evidence_complete":null,"should_block":null,"blocked":null,"tool_sequence_ok":null,"json_search_used":null,"search_rounds":null,"fallback_handled":null,"output_contract_ok":null,"api_only_handled":null,"notes":""}

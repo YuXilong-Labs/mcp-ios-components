@@ -1,34 +1,50 @@
 # mcp-ios-components 技能包（生产版）
 
-本目录提供与 `mcp-ios-components` 配套的 Agent Skills，目标是把“可查询组件”升级为“可执行工作流”，从源头减少重复造轮子。
+本目录提供与 `mcp-ios-components` 配套的 Agent Skills，目标是把“可查询组件”升级为“可执行工作流”，以证据驱动的方式减少重复造轮子。
 
 ## Skills 列表
 
 - `ios-component-implementation`
-  - 用途：在实现需求时，自动完成“检索组件 -> 选型 -> 落地代码 -> 自检”。
+  - 用途：实现需求时执行“检索组件 -> 选型确认 -> 代码落地 -> 自检”。
 - `ios-component-selection`
-  - 用途：需求评审/方案阶段做组件选型与风险评估。
+  - 用途：需求评审/方案阶段做组件选型、风险评估与主备方案输出。
 - `ios-component-migration`
-  - 用途：把已有重复实现迁移到基础组件。
+  - 用途：将已有重复实现迁移到基础组件，输出映射表、分批改造与回滚策略。
 - `ios-component-review`
-  - 用途：PR/代码审查时检查是否绕过组件、是否重复造轮子。
+  - 用途：PR/变更审查时检查是否绕过组件或重复造轮子，输出证据链与阻塞建议。
 
-## 推荐启用顺序
+## 推荐组合启用策略
 
-1. 先启用 `ios-component-implementation`
-2. 再启用 `ios-component-review`
-3. 按需启用 `selection` 与 `migration`
+1. 日常开发：`implementation` + `review`
+2. 需求评审前置：加 `selection`
+3. 历史治理/收敛：加 `migration`
 
-## 配套要求
+## 配套要求（MCP 能力）
 
-- 必须先连接 MCP 服务，并可用以下工具：
-  - `search_component`
-  - `get_component_api`
-  - `get_class_detail`
-  - `find_usage_example`
-  - `read_source`
-  - `get_tool_docs`
-- 推荐在业务仓库根目录配置 `AGENTS.md`，强化“复用优先”规则。
+必须先连接 `mcp-ios-components` 服务，并优先保证以下工具可用：
+- `search_component`
+- `get_component_api`
+- `get_class_detail`
+- `find_usage_example`
+- `read_source`
+- `get_tool_docs`
+- `audit_component_api_quality`（可选但推荐）
+
+推荐在业务仓库根目录配置 `AGENTS.md`，强化“复用优先”规则。
+
+## 与 MCP 工具的最佳配合方式（JSON-first）
+
+- 首次接入或工具语义不清：先用 `get_tool_docs(..., format="json")`
+- 检索默认：`search_component(format="json", limit=5)` 多轮小步收敛
+- 命中后：`get_component_api` -> `get_class_detail` -> 必要时 `read_source(20-40 行)`
+- `api_only` 组件：使用 `get_component_api` / `get_class_detail` / `find_usage_example` 替代源码验证
+- 只有在需要人工展示时才使用 `format="text"`
+
+## 渐进披露设计（Progressive Disclosure）
+
+- `SKILL.md`：只保留触发边界、流程、失败恢复、输出契约
+- `references/`：存放词表、模板、判定规则、执行手册
+- `agents/openai.yaml`：为 Codex/Claude UI 提供展示与默认提示信息（双兼容）
 
 ## 参考资料与评测
 
@@ -38,10 +54,19 @@
   - `trigger-negative.jsonl`
   - `functional-cases.md`
   - `run_eval.py`（指标计算与门禁脚本）
-- CI 模板：`.github/workflows/skills-eval.yml`
 
-## 验收建议
+## 评测闭环流程（建议）
 
-- 触发准确率：>= 90%
-- 组件复用率：显著提升（建议统计周报）
-- PR 中重复造轮子问题：持续下降
+1. 先跑触发评测（正负样本）
+2. 再跑功能用例（实现 / 选型 / 迁移 / 审查）
+3. 回填 `results/latest.jsonl`（含证据字段与流程字段）
+4. 运行 `run_eval.py --assert-thresholds` 做门禁
+5. 根据指标迭代 skill 文案与 references
+
+## 验收建议（最终目标）
+
+- 触发准确率：>= 95%
+- 误触发率：<= 5%
+- 复用证据完整率：>= 98%
+- 阻塞级问题漏检率：<= 2%
+- 流程合规率：>= 90%（有流程字段数据时）

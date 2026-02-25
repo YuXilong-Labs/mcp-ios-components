@@ -25,6 +25,7 @@ class Metrics:
     false_trigger_rate: float
     evidence_completeness: float
     block_miss_rate: float
+    process_compliance: float | None
 
 
 def read_jsonl(path: Path) -> List[dict]:
@@ -81,6 +82,12 @@ def init_results(expected: Dict[str, dict], out_path: Path) -> None:
                 "evidence_complete": None,
                 "should_block": None,
                 "blocked": None,
+                "tool_sequence_ok": None,
+                "json_search_used": None,
+                "search_rounds": None,
+                "fallback_handled": None,
+                "output_contract_ok": None,
+                "api_only_handled": None,
                 "notes": "",
             }
         )
@@ -137,11 +144,38 @@ def compute_metrics(expected: Dict[str, dict], results: List[dict]) -> Metrics:
                     miss_count += 1
     block_miss_rate = (miss_count / len(should_block)) if should_block else 0.0
 
+    # process compliance（按已回填流程字段统计，字段级通过率）
+    process_checks: List[bool] = []
+    for cid in pos_ids:
+        row = result_map.get(cid, {})
+
+        for key in (
+            "tool_sequence_ok",
+            "json_search_used",
+            "fallback_handled",
+            "output_contract_ok",
+            "api_only_handled",
+        ):
+            val = row.get(key)
+            if isinstance(val, bool):
+                process_checks.append(val)
+
+        rounds = row.get("search_rounds")
+        if isinstance(rounds, int):
+            process_checks.append(rounds >= 3)
+
+    process_compliance = (
+        sum(1 for ok in process_checks if ok) / len(process_checks)
+        if process_checks
+        else None
+    )
+
     return Metrics(
         trigger_accuracy=trigger_accuracy,
         false_trigger_rate=false_trigger_rate,
         evidence_completeness=evidence_completeness,
         block_miss_rate=block_miss_rate,
+        process_compliance=process_compliance,
     )
 
 
@@ -151,6 +185,10 @@ def print_report(metrics: Metrics) -> None:
     print(f"false_trigger_rate    : {metrics.false_trigger_rate:.2%}")
     print(f"evidence_completeness : {metrics.evidence_completeness:.2%}")
     print(f"block_miss_rate       : {metrics.block_miss_rate:.2%}")
+    if metrics.process_compliance is None:
+        print("process_compliance    : N/A (未回填流程字段)")
+    else:
+        print(f"process_compliance    : {metrics.process_compliance:.2%}")
 
 
 def enforce_thresholds(metrics: Metrics, args: argparse.Namespace) -> int:
@@ -172,6 +210,14 @@ def enforce_thresholds(metrics: Metrics, args: argparse.Namespace) -> int:
         failed.append(
             f"block_miss_rate {metrics.block_miss_rate:.2%} > {args.max_block_miss_rate:.2%}"
         )
+    if (
+        metrics.process_compliance is not None
+        and metrics.process_compliance < args.min_process_compliance
+    ):
+        failed.append(
+            "process_compliance "
+            f"{metrics.process_compliance:.2%} < {args.min_process_compliance:.2%}"
+        )
 
     if failed:
         print("\n[FAIL] 指标未达标：")
@@ -179,6 +225,8 @@ def enforce_thresholds(metrics: Metrics, args: argparse.Namespace) -> int:
             print(f"- {item}")
         return 1
 
+    if metrics.process_compliance is None:
+        print("\n[WARN] 未回填流程字段，跳过 process_compliance 阈值校验")
     print("\n[PASS] 指标达标")
     return 0
 
@@ -221,6 +269,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-false-trigger-rate", type=float, default=0.10)
     p.add_argument("--min-evidence-completeness", type=float, default=0.95)
     p.add_argument("--max-block-miss-rate", type=float, default=0.05)
+    p.add_argument("--min-process-compliance", type=float, default=0.90)
 
     return p.parse_args()
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS Component Implementation"
+  short_description: "在 iOS 实现阶段先检索组件再编码，并输出复用证据与自检结论"
+  default_prompt: "Use $ios-component-implementation to implement this iOS feature with reuse-first component search, evidence, and final code output."

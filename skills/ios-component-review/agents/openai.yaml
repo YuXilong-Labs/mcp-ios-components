@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS Component Review"
+  short_description: "审查 iOS PR 是否重复造轮子或绕过组件，并给出证据链与阻塞建议"
+  default_prompt: "Use $ios-component-review to review this iOS change for duplicate infrastructure code and provide component evidence, severity, and blocking recommendations."

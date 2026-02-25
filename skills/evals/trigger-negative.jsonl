@@ -6,3 +6,19 @@
 {"id":"n6","input":"把这段英文翻译成中文","expect_trigger":"none"}
 {"id":"n7","input":"给我一份会议纪要模板","expect_trigger":"none"}
 {"id":"n8","input":"写个 SQL 查询统计日活","expect_trigger":"none"}
+{"id":"n9","input":"解释 Swift actor 和 async/await 的区别","expect_trigger":"none"}
+{"id":"n10","input":"帮我修复一个 iOS AutoLayout 约束冲突，直接看报错日志","expect_trigger":"none"}
+{"id":"n11","input":"写一个纯 Swift 算法：LRU Cache","expect_trigger":"none"}
+{"id":"n12","input":"把这段 Objective-C 代码翻译成 Swift","expect_trigger":"none"}
+{"id":"n13","input":"解释 UITableViewDiffableDataSource 的使用方式","expect_trigger":"none"}
+{"id":"n14","input":"帮我写 iOS 单元测试用例，不涉及组件选型","expect_trigger":"none"}
+{"id":"n15","input":"优化 Xcode 编译速度，有什么通用建议","expect_trigger":"none"}
+{"id":"n16","input":"设计一个 Python MCP server 的鉴权方案","expect_trigger":"none"}
+{"id":"n17","input":"给我一份 PR 模板（通用版）","expect_trigger":"none"}
+{"id":"n18","input":"review 这篇技术文章的行文结构","expect_trigger":"none"}
+{"id":"n19","input":"分析这个崩溃日志 symbolicated stack","expect_trigger":"none"}
+{"id":"n20","input":"iOS 页面白屏排查思路（不需要代码改造建议）","expect_trigger":"none"}
+{"id":"n21","input":"帮我写一个 Android 网络请求封装","expect_trigger":"none"}
+{"id":"n22","input":"给这段 SwiftUI 代码做视觉优化建议，不涉及组件库复用","expect_trigger":"none"}
+{"id":"n23","input":"生成一份项目周报，包含风险和进展","expect_trigger":"none"}
+{"id":"n24","input":"解释 CocoaPods 和 Swift Package Manager 的区别","expect_trigger":"none"}

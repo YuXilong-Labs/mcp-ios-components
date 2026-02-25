@@ -90,6 +90,12 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
 
 详见：`skills/README.md`
 
+技能包已按“复用优先 + 证据输出”方式组织，并包含：
+- 4 个 `SKILL.md`（触发边界、流程、失败恢复、输出契约）
+- `references/`（词表、模板、判定规则，按需加载）
+- `agents/openai.yaml`（Claude/Codex UI 元数据兼容）
+- `skills/evals/*`（触发、功能与流程合规评测）
+
 ## 工具列表
 
 | 工具 | 说明 |
@@ -123,6 +129,8 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
    - 再常见关键词：圆角 / corner / round / cache / request
 3) 如果结果偏离（例如 corner 命中大量 UIView 圆角），追加更定向词：clip / mask / imageWith / tm_
 4) 仅在命中明确 file:line 后，再小范围 read_source（例如 30 行）验证
+5) 若命中 `api_only` 组件无法 read_source，则改用 get_component_api + get_class_detail + find_usage_example
+6) 输出时保留证据链（search/api/class 或 source/example），避免只给“有/没有”的结论
 ```
 
 一个典型的“圆角头像/图片裁剪”检索组合：

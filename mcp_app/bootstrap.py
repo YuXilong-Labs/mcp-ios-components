@@ -257,6 +257,20 @@ def list_components() -> str:
 
 @mcp.tool()
 def get_tool_docs(tool_name: str = "", format: str = "text") -> str:
+    """返回 MCP 工具说明与最佳实践。
+
+    适用场景：
+    - Agent 首次接入本服务，不确定工具用途/参数时
+    - 需要 machine-readable 文档（`format=\"json\"`）做自动化决策时
+
+    参数：
+    - `tool_name`: 指定工具名；为空时返回全部工具概览
+    - `format`: `text` 或 `json`
+
+    注意事项：
+    - 推荐优先查看 `search_component`、`read_source` 等高频工具文档
+    - 本工具内容依赖各 MCP tool 的函数 docstring，若为空会影响说明完整度
+    """
     if format not in VALID_FORMATS:
         return f"错误：无效的 format 值，可选: {', '.join(sorted(VALID_FORMATS))}"
 
@@ -342,6 +356,26 @@ def is_api_only_component(component_name: str, comp: Optional[dict] = None) -> b
 
 @mcp.tool()
 def search_component(keyword: str, kind: str = "", format: str = "text", limit: int = 50) -> str:
+    """搜索组件公开符号/声明/注释（模糊匹配）。
+
+    适用场景：
+    - 复用优先检索：先找是否已有组件/API 能覆盖需求
+    - 组件选型、实现前查找候选方法/类/协议
+
+    参数：
+    - `keyword`: 关键词（必填，建议短词）
+    - `kind`: 可选类型过滤（如 `method`、`interface`）
+    - `format`: `text` 或 `json`；Agent 推荐 `json`
+    - `limit`: 返回条数上限（1-200）
+
+    推荐用法：
+    - 默认 `format=\"json\", limit=5` 多轮检索（中文词/英文词/类名词）逐步收敛
+    - 命中后再调用 `get_component_api` / `get_class_detail` 确认
+
+    常见误区：
+    - 单次大 `limit` 检索后就判定“无结果/无能力”
+    - 只搜语义词，不搜类名和动词组合，导致误判
+    """
     with INDEX_LOCK:
         index_snapshot = dict(INDEX)
     return query_service.search_component(
@@ -362,6 +396,21 @@ def _looks_suspicious_name(name: str) -> str:
 
 @mcp.tool()
 def audit_component_api_quality(component_name: str = "", format: str = "json", limit: int = 200) -> str:
+    """只读审计组件 API 质量候选清单（缺注释/可疑命名）。
+
+    适用场景：
+    - 在组件选型阶段比较维护风险
+    - 治理 API 命名与注释质量（只读，不修改源码）
+
+    参数：
+    - `component_name`: 指定组件；为空表示审计全部组件
+    - `format`: `text` 或 `json`（推荐 `json`）
+    - `limit`: 每类问题最多返回条数
+
+    注意事项：
+    - 输出是启发式候选清单，不等于最终结论
+    - 建议结合 `get_component_api` / `read_source` 小范围确认
+    """
     with INDEX_LOCK:
         index_snapshot = dict(INDEX)
     return query_service.audit_component_api_quality(
@@ -375,6 +424,22 @@ def audit_component_api_quality(component_name: str = "", format: str = "json", 
 
 @mcp.tool()
 def get_component_api(component_name: str) -> str:
+    """获取组件完整公开 API（按文件分组）。
+
+    适用场景：
+    - 已通过 `search_component` 命中候选后，确认可复用 API 范围
+    - 组件选型、实现、审查中的证据输出
+
+    参数：
+    - `component_name`: 组件名（区分大小写；支持已索引组件）
+
+    推荐调用顺序：
+    - `search_component` -> `get_component_api` -> `get_class_detail` -> `read_source`（必要时）
+
+    常见误区：
+    - 未确认组件名直接猜测 API
+    - 仅凭搜索命中，不查看 API 就下结论
+    """
     with INDEX_LOCK:
         index_snapshot = dict(INDEX)
     return query_service.get_component_api(index_snapshot, component_name, max_api_output=MAX_API_OUTPUT)
@@ -382,6 +447,20 @@ def get_component_api(component_name: str) -> str:
 
 @mcp.tool()
 def get_class_detail(component_name: str, classname: str) -> str:
+    """查看类/协议视图（定义、属性、公开/内部方法）。
+
+    适用场景：
+    - 确认关键类入口、方法分布与定义文件
+    - 在不读取大量源码的前提下做结构化验证
+
+    参数：
+    - `component_name`: 组件名
+    - `classname`: 类/协议/结构体名
+
+    注意事项：
+    - 建议先用 `get_component_api` 确认候选类名，再调用本工具
+    - 若仍需实现细节，再用 `read_source` 小范围读取
+    """
     with INDEX_LOCK:
         index_snapshot = dict(INDEX)
     return query_service.get_class_detail(index_snapshot, component_name, classname)
@@ -389,6 +468,24 @@ def get_class_detail(component_name: str, classname: str) -> str:
 
 @mcp.tool()
 def read_source(component_name: str, file: str, start: int = 1, end: int = 0) -> str:
+    """按行读取组件源码（支持模糊文件名）。
+
+    适用场景：
+    - 在已有 `file:line` 证据后，小范围验证实现语义/边界条件
+    - 补充 `get_component_api` / `get_class_detail` 无法表达的细节
+
+    参数：
+    - `component_name`: 组件名
+    - `file`: 文件路径或模糊文件名（限制在组件目录内）
+    - `start` / `end`: 行号范围；`end<=0` 时自动给出小窗口
+
+    推荐用法：
+    - 先 `search_component` / `get_component_api` 定位，再读取 20-40 行窗口
+
+    常见误区：
+    - 大段读取源码作为首选步骤（成本高且易偏离）
+    - 忽略 `api_only` 组件访问限制（会被拒绝）
+    """
     with INDEX_LOCK:
         index_snapshot = dict(INDEX)
     return source_service.read_source(
@@ -564,6 +661,20 @@ def sync_gitlab_group_tool(group_id: str, gitlab_url: str = "", gitlab_token: st
 
 @mcp.tool()
 def find_usage_example(component_name: str) -> str:
+    """搜索其他组件中对目标组件的导入与使用示例。
+
+    适用场景：
+    - 组件选型时验证是否有真实使用样例
+    - 迁移/实现时参考现有接入方式
+    - `api_only` 组件场景下，作为源码验证的替代证据之一
+
+    参数：
+    - `component_name`: 目标组件名
+
+    注意事项：
+    - 返回结果可能较多，建议只摘取最相关位置做证据
+    - 与 `get_component_api` 联合使用，避免只凭 import 命中下结论
+    """
     with INDEX_LOCK:
         index_snapshot = dict(INDEX)
     return source_service.find_usage_example(

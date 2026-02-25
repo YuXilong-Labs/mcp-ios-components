@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS Component Migration"
+  short_description: "将 iOS 重复基础实现迁移到组件库，输出映射表、分批计划与回滚策略"
+  default_prompt: "Use $ios-component-migration to replace duplicated iOS infrastructure code with reusable components using a phased migration plan and rollback criteria."

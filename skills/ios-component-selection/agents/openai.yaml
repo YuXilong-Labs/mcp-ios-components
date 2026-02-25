@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS Component Selection"
+  short_description: "在 iOS 方案评审阶段输出候选组件矩阵、证据、风险与主备方案"
+  default_prompt: "Use $ios-component-selection to evaluate reusable iOS components for this requirement and produce evidence-backed primary and backup options."
