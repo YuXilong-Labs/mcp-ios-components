@@ -96,6 +96,23 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
 - `agents/openai.yaml`（Claude/Codex UI 元数据兼容）
 - `skills/evals/*`（触发、功能与流程合规评测）
 
+### Skills 一键安装（Claude / Codex）
+
+仓库内置安装脚本，可将 `skills/` 下 4 个技能批量安装到本地技能目录（支持覆盖确认、版本提示、安装校验）：
+
+```bash
+# 同时安装到 Codex + Claude（默认 all）
+python3 scripts/install_skills.py
+
+# 仅安装到 Codex
+python3 scripts/install_skills.py --target codex
+
+# 仅安装到 Claude（目录自动探测失败时可显式指定）
+python3 scripts/install_skills.py --target claude --claude-dir ~/.claude/skills
+```
+
+更多参数见：`python3 scripts/install_skills.py --help`
+
 ## 工具列表
 
 | 工具 | 说明 |

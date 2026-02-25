@@ -19,6 +19,35 @@
 2. 需求评审前置：加 `selection`
 3. 历史治理/收敛：加 `migration`
 
+## 一键安装 Skills（Claude / Codex）
+
+仓库提供安装脚本：`/Users/yuxilong/clawd/mcp-ios-components/scripts/install_skills.py`
+
+常用命令：
+
+```bash
+# 同时安装到 Codex + Claude（默认 all）
+python3 scripts/install_skills.py
+
+# 仅安装到 Codex（默认目录：$CODEX_HOME/skills 或 ~/.codex/skills）
+python3 scripts/install_skills.py --target codex
+
+# 仅安装到 Claude（自动探测常见目录；探测不到时请显式指定）
+python3 scripts/install_skills.py --target claude --claude-dir ~/.claude/skills
+
+# 指定两个目标目录并自动覆盖（无交互）
+python3 scripts/install_skills.py --target all \
+  --codex-dir ~/.codex/skills \
+  --claude-dir ~/.claude/skills \
+  --yes
+```
+
+脚本特性：
+- 自动展示源版本与目标已安装版本（版本提示）
+- 发现已存在技能时交互确认覆盖（或使用 `--yes`）
+- 安装后校验 `SKILL.md` / frontmatter / `agents/openai.yaml`
+- 支持 `--dry-run` 和 `--include <skill-name>`（只装指定技能）
+
 ## 配套要求（MCP 能力）
 
 必须先连接 `mcp-ios-components` 服务，并优先保证以下工具可用：
