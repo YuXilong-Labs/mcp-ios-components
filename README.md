@@ -67,6 +67,8 @@ claude mcp list
 
 ## 强化组件复用（推荐）
 
+### 方式一：项目规则（AGENTS.md）
+
 将 `AGENTS.md.template` 复制到你的 iOS 项目根目录：
 
 ```bash
@@ -74,6 +76,19 @@ cp /path/to/mcp-ios-components/AGENTS.md.template /path/to/your/project/AGENTS.m
 ```
 
 然后编辑 `AGENTS.md`，填写项目特定的组件表。Claude Code 会自动读取并遵循规则，在实现功能前先检查组件库。
+
+### 方式二：生产级 Skill 套件（推荐与 MCP 配套使用）
+
+仓库内置 `skills/` 目录，提供四个可直接上传到 Claude 的技能：
+
+- `ios-component-implementation`：实现需求时强制“先检索再编码”
+- `ios-component-selection`：需求评审阶段组件选型
+- `ios-component-migration`：把已有重复实现迁移到基础组件
+- `ios-component-review`：PR 阶段拦截重复造轮子
+
+建议：先启用 implementation + review，再按需启用 selection/migration。
+
+详见：`skills/README.md`
 
 ## 工具列表
 
