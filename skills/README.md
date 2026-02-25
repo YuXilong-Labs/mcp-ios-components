@@ -30,6 +30,14 @@
   - `get_tool_docs`
 - 推荐在业务仓库根目录配置 `AGENTS.md`，强化“复用优先”规则。
 
+## 参考资料与评测
+
+- 每个 skill 下的 `references/` 包含生产实践模板与执行手册
+- `evals/` 提供触发与功能回归用例：
+  - `trigger-positive.jsonl`
+  - `trigger-negative.jsonl`
+  - `functional-cases.md`
+
 ## 验收建议
 
 - 触发准确率：>= 90%

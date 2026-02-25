@@ -1,0 +1,8 @@
+{"id":"n1","input":"今天天气怎么样","expect_trigger":"none"}
+{"id":"n2","input":"写一首关于春天的诗","expect_trigger":"none"}
+{"id":"n3","input":"帮我总结这篇产品文档","expect_trigger":"none"}
+{"id":"n4","input":"解释一下 Transformer 原理","expect_trigger":"none"}
+{"id":"n5","input":"做一个 Java 后端限流方案","expect_trigger":"none"}
+{"id":"n6","input":"把这段英文翻译成中文","expect_trigger":"none"}
+{"id":"n7","input":"给我一份会议纪要模板","expect_trigger":"none"}
+{"id":"n8","input":"写个 SQL 查询统计日活","expect_trigger":"none"}

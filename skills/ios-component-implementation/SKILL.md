@@ -67,6 +67,11 @@ metadata:
 3. 代码实现
 4. 自检结论（是否仍存在重复造轮子风险）
 
+## 参考资料
+
+- 检查清单：`references/checklist.md`
+- 检索策略：`references/keyword-strategy.md`
+
 ## 常见问题
 
 ### 问题：搜索结果很多但不确定

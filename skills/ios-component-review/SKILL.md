@@ -52,6 +52,10 @@ metadata:
 - 必改项
 - 可延后项
 
+## 参考资料
+
+- 严重级别判定：`references/severity-rubric.md`
+
 ## 阻塞规则（默认）
 
 命中以下任意情况可标记阻塞：

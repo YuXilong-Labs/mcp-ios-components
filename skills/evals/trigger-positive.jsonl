@@ -1,0 +1,8 @@
+{"id":"p1","input":"实现一个用户列表页，要求不要重复造轮子，走现有组件","expect_trigger":"ios-component-implementation"}
+{"id":"p2","input":"给我做这个需求的组件化选型方案","expect_trigger":"ios-component-selection"}
+{"id":"p3","input":"把现有 URLSession 封装迁移到基础网络组件","expect_trigger":"ios-component-migration"}
+{"id":"p4","input":"帮我 review 这个 PR，重点检查是否绕过基础组件","expect_trigger":"ios-component-review"}
+{"id":"p5","input":"实现头像圆角缓存加载，优先复用现有组件","expect_trigger":"ios-component-implementation"}
+{"id":"p6","input":"这个需求是否需要新增组件？先做选型评估","expect_trigger":"ios-component-selection"}
+{"id":"p7","input":"把业务里的自定义弹窗统一替换成基础 UI 组件","expect_trigger":"ios-component-migration"}
+{"id":"p8","input":"审查下这次改动有没有重复封装网络层","expect_trigger":"ios-component-review"}

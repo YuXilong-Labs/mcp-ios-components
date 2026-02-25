@@ -46,6 +46,10 @@ metadata:
 - 迁移成本
 - 测试重点
 
+## 参考资料
+
+- 输出模板：`references/output-template.md`
+
 ## 规则
 
 - 禁止只给“可行”结论，不给组件/API 证据

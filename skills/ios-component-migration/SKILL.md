@@ -58,6 +58,10 @@ metadata:
 3. 代码改动建议（按批次）
 4. 验证计划
 
+## 参考资料
+
+- 迁移执行手册：`references/migration-playbook.md`
+
 ## 规则
 
 - 不允许“一次性全量替换”无验证
