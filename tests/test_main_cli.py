@@ -116,6 +116,40 @@ class TestMainCli(unittest.TestCase):
             mcp_run.assert_called_once()
             inst.start.assert_called_once()
 
+    def test_align_mcp_http_runtime_settings_disables_localhost_only_security_for_lan_host(self):
+        s = self._server()
+        fake_transport_security = types.SimpleNamespace(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
+            allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+        )
+        fake_settings = types.SimpleNamespace(host="127.0.0.1", port=8000, transport_security=fake_transport_security)
+        fake_mcp = types.SimpleNamespace(settings=fake_settings)
+
+        with mock.patch.object(s, "mcp", fake_mcp):
+            s._align_mcp_http_runtime_settings("0.0.0.0", 8900)
+
+        self.assertEqual(fake_settings.host, "0.0.0.0")
+        self.assertEqual(fake_settings.port, 8900)
+        self.assertFalse(fake_settings.transport_security.enable_dns_rebinding_protection)
+
+    def test_align_mcp_http_runtime_settings_keeps_loopback_security(self):
+        s = self._server()
+        fake_transport_security = types.SimpleNamespace(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*"],
+            allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+        )
+        fake_settings = types.SimpleNamespace(host="127.0.0.1", port=8000, transport_security=fake_transport_security)
+        fake_mcp = types.SimpleNamespace(settings=fake_settings)
+
+        with mock.patch.object(s, "mcp", fake_mcp):
+            s._align_mcp_http_runtime_settings("127.0.0.1", 8900)
+
+        self.assertEqual(fake_settings.host, "127.0.0.1")
+        self.assertEqual(fake_settings.port, 8900)
+        self.assertTrue(fake_settings.transport_security.enable_dns_rebinding_protection)
+
     def test_main_http_branch_with_fake_modules(self):
         s = self._server()
 
@@ -149,6 +183,10 @@ class TestMainCli(unittest.TestCase):
             s.main()
 
         uvicorn_mod.run.assert_called_once()
+        self.assertEqual(getattr(s.mcp.settings, "host", None), "0.0.0.0")
+        self.assertEqual(getattr(s.mcp.settings, "port", None), 9999)
+        if getattr(s.mcp.settings, "transport_security", None) is not None:
+            self.assertFalse(s.mcp.settings.transport_security.enable_dns_rebinding_protection)
         app = uvicorn_mod.run.call_args.args[0]
         self.assertIsInstance(app, _DummyStarlette)
         self.assertEqual(len(app.routes), 3)

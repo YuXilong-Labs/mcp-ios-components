@@ -14,6 +14,10 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+try:
+    from mcp.server.transport_security import TransportSecuritySettings
+except Exception:  # pragma: no cover - older mcp versions / import issues
+    TransportSecuritySettings = None  # type: ignore[assignment]
 
 from . import config as app_config
 from .indexing import builder as index_builder
@@ -807,6 +811,65 @@ def verify_gitlab_signature(body: bytes, signature: str) -> bool:
     return hmac.compare_digest(signature, WEBHOOK_SECRET)
 
 
+_LOOPBACK_HTTP_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_LOCALHOST_ONLY_ALLOWED_HOSTS = frozenset({"127.0.0.1:*", "localhost:*", "[::1]:*"})
+_LOCALHOST_ONLY_ALLOWED_ORIGINS = frozenset({"http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"})
+
+
+def _normalize_http_host(host: str) -> str:
+    normalized = str(host or "").strip().lower()
+    if normalized.startswith("[") and normalized.endswith("]"):
+        normalized = normalized[1:-1]
+    return normalized
+
+
+def _is_loopback_http_host(host: str) -> bool:
+    return _normalize_http_host(host) in _LOOPBACK_HTTP_HOSTS
+
+
+def _is_localhost_only_transport_security(settings) -> bool:
+    if settings is None:
+        return False
+
+    if not getattr(settings, "enable_dns_rebinding_protection", False):
+        return False
+
+    allowed_hosts = frozenset(getattr(settings, "allowed_hosts", []) or [])
+    allowed_origins = frozenset(getattr(settings, "allowed_origins", []) or [])
+    return allowed_hosts == _LOCALHOST_ONLY_ALLOWED_HOSTS and allowed_origins == _LOCALHOST_ONLY_ALLOWED_ORIGINS
+
+
+def _align_mcp_http_runtime_settings(http_host: str, http_port: int) -> None:
+    """Align FastMCP runtime settings with CLI HTTP bind args.
+
+    FastMCP may auto-enable localhost-only DNS rebinding protection when created
+    with default host=127.0.0.1. Our CLI default is --host 0.0.0.0, so we need to
+    disable that localhost-only policy for LAN/WAN bindings to avoid 421 errors.
+    """
+    settings = getattr(mcp, "settings", None)
+    if settings is None:
+        return
+
+    settings.host = http_host
+    settings.port = http_port
+
+    if _is_loopback_http_host(http_host):
+        return
+
+    current_transport_security = getattr(settings, "transport_security", None)
+    if not _is_localhost_only_transport_security(current_transport_security):
+        return
+
+    if TransportSecuritySettings is None:
+        return
+
+    settings.transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    print(
+        f"[mcp-ios] ⚙️ 非 localhost 监听 ({http_host})，已关闭 FastMCP 默认 localhost Host 校验以支持局域网访问",
+        file=sys.stderr,
+    )
+
+
 # ============================================================
 # 启动
 # ============================================================
@@ -905,6 +968,7 @@ def main():
         from starlette.routing import Mount, Route
 
         valid_keys = load_api_keys()
+        _align_mcp_http_runtime_settings(args.host, args.port)
         mcp_app = mcp.streamable_http_app()
 
         @asynccontextmanager

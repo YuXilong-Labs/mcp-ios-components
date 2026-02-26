@@ -261,10 +261,19 @@ python mcp_server.py --gen-key "teammate-name"
 # 启动 HTTP 服务
 python mcp_server.py --http --port 8900 /path/to/pods
 
+# 局域网访问（监听所有网卡）
+python mcp_server.py --http --host 0.0.0.0 --port 8900 /path/to/pods
+
 # 远程 Claude Code 连接
 claude mcp add --transport http ios-components http://your-server:8900/mcp \
   --header "Authorization: Bearer sk-xxx"
 ```
+
+局域网访问说明：
+
+- 使用 `--host 0.0.0.0` 可让同一局域网设备通过 `http://<你的局域网IP>:8900/mcp` 访问
+- 如启用 API Key，客户端仍需携带 `Authorization: Bearer sk-xxx`
+- 若出现 `421 Misdirected Request`，通常是 Host/Origin 头或代理转发配置问题（默认局域网直连场景不应再出现）
 
 ### API Key 管理
 
