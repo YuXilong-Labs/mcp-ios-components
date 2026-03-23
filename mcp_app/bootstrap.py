@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hmac
 import json
 import os
@@ -814,6 +815,22 @@ def verify_gitlab_signature(body: bytes, signature: str) -> bool:
 _LOOPBACK_HTTP_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _LOCALHOST_ONLY_ALLOWED_HOSTS = frozenset({"127.0.0.1:*", "localhost:*", "[::1]:*"})
 _LOCALHOST_ONLY_ALLOWED_ORIGINS = frozenset({"http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"})
+MCP_HTTP_PATH = "/mcp"
+OAUTH_DISCOVERY_PATHS = frozenset(
+    {
+        "/.well-known/oauth-authorization-server",
+        f"/.well-known/oauth-authorization-server{MCP_HTTP_PATH}",
+        f"{MCP_HTTP_PATH}/.well-known/oauth-authorization-server",
+    }
+)
+PUBLIC_MCP_DISCOVERY_METHODS = frozenset(
+    {
+        "initialize",
+        "tools/list",
+        "resources/list",
+        "prompts/list",
+    }
+)
 
 
 def _normalize_http_host(host: str) -> str:
@@ -868,6 +885,114 @@ def _align_mcp_http_runtime_settings(http_host: str, http_port: int) -> None:
         f"[mcp-ios] ⚙️ 非 localhost 监听 ({http_host})，已关闭 FastMCP 默认 localhost Host 校验以支持局域网访问",
         file=sys.stderr,
     )
+
+
+def _decode_http_headers(scope: dict) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for raw_key, raw_value in scope.get("headers", []):
+        try:
+            key = raw_key.decode().lower()
+            value = raw_value.decode()
+        except Exception:
+            continue
+        headers[key] = value
+    return headers
+
+
+def _is_plain_mcp_probe_request(scope: dict) -> bool:
+    if scope.get("type") != "http":
+        return False
+
+    if scope.get("method", "").upper() != "GET":
+        return False
+
+    if scope.get("path", "") != MCP_HTTP_PATH:
+        return False
+
+    headers = _decode_http_headers(scope)
+
+    return not any(
+        [
+            "mcp-session-id" in headers,
+            "last-event-id" in headers,
+        ]
+    )
+
+
+def _build_mcp_probe_payload(http_host: str, http_port: int, auth_enabled: bool) -> dict:
+    return {
+        "ok": True,
+        "message": "MCP HTTP 端点已启动。请使用 MCP 客户端通过 POST /mcp 发起初始化，而不是直接用浏览器 GET /mcp。",
+        "mcp_endpoint": f"http://{http_host}:{http_port}{MCP_HTTP_PATH}",
+        "health_endpoint": f"http://{http_host}:{http_port}/webhook/health",
+        "auth": "bearer" if auth_enabled else "none",
+    }
+
+
+def _build_oauth_not_supported_payload(http_host: str, http_port: int, auth_enabled: bool) -> dict:
+    return {
+        "ok": False,
+        "error": "oauth_discovery_not_supported",
+        "message": "当前服务未提供 OAuth 自动发现端点，请直接连接 MCP HTTP 端点并按需携带 Bearer API Key。",
+        "mcp_endpoint": f"http://{http_host}:{http_port}{MCP_HTTP_PATH}",
+        "health_endpoint": f"http://{http_host}:{http_port}/webhook/health",
+        "auth": "bearer" if auth_enabled else "none",
+    }
+
+
+def _extract_jsonrpc_method_from_body(body: bytes) -> str:
+    if not body:
+        return ""
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception:
+        return ""
+
+    if isinstance(payload, dict):
+        method = payload.get("method", "")
+        if isinstance(method, str):
+            return method
+
+    return ""
+
+
+def _is_public_mcp_discovery_method(method: str) -> bool:
+    return method in PUBLIC_MCP_DISCOVERY_METHODS
+
+
+async def _read_http_request_body(receive) -> bytes:
+    chunks: list[bytes] = []
+
+    while True:
+        message = await receive()
+        if message.get("type") != "http.request":
+            break
+
+        chunks.append(message.get("body", b""))
+        if not message.get("more_body", False):
+            break
+
+    return b"".join(chunks)
+
+
+def _build_replay_receive(body: bytes):
+    sent = False
+    disconnect_event = asyncio.Event()
+
+    async def replay_receive():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {
+                "type": "http.request",
+                "body": body,
+                "more_body": False,
+            }
+        await disconnect_event.wait()
+        return {"type": "http.disconnect"}
+
+    return replay_receive
 
 
 # ============================================================
@@ -1015,6 +1140,30 @@ def main():
 
         async def auth_mcp_app(scope, receive, send):
             if scope["type"] == "http":
+                if scope.get("path", "") in OAUTH_DISCOVERY_PATHS:
+                    response = JSONResponse(
+                        _build_oauth_not_supported_payload(args.host, args.port, bool(valid_keys)),
+                        status_code=404,
+                    )
+                    await response(scope, receive, send)
+                    return
+
+                if _is_plain_mcp_probe_request(scope):
+                    response = JSONResponse(
+                        _build_mcp_probe_payload(args.host, args.port, bool(valid_keys)),
+                        status_code=200,
+                    )
+                    await response(scope, receive, send)
+                    return
+
+                if scope.get("path", "") == MCP_HTTP_PATH and scope.get("method", "").upper() == "POST":
+                    raw_body = await _read_http_request_body(receive)
+                    receive = _build_replay_receive(raw_body)
+
+                    if _is_public_mcp_discovery_method(_extract_jsonrpc_method_from_body(raw_body)):
+                        await mcp_app(scope, receive, send)
+                        return
+
                 headers = dict(scope.get("headers", []))
                 auth_value = headers.get(b"authorization", b"").decode()
                 api_key = auth_value.replace("Bearer ", "").strip()

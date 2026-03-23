@@ -272,7 +272,11 @@ claude mcp add --transport http ios-components http://your-server:8900/mcp \
 局域网访问说明：
 
 - 使用 `--host 0.0.0.0` 可让同一局域网设备通过 `http://<你的局域网IP>:8900/mcp` 访问
+- 存活检查请使用 `http://<你的局域网IP>:8900/webhook/health`，不要用浏览器直接 `GET /mcp`
+- `/mcp` 是 MCP Streamable HTTP 端点，客户端应通过 MCP 协议发起初始化，而不是普通 HTTP 探测
 - 如启用 API Key，客户端仍需携带 `Authorization: Bearer sk-xxx`
+- 当前未提供 OAuth 自动发现端点；若客户端强依赖 `/.well-known/oauth-authorization-server*`，请改为直连 MCP HTTP + Bearer API Key 模式
+- 为兼容最新 Codex / OpenAI MCP 客户端，服务会对 `initialize`、`tools/list`、`resources/list`、`prompts/list` 这类发现阶段请求放行；实际工具调用仍可继续走 Bearer 校验
 - 若出现 `421 Misdirected Request`，通常是 Host/Origin 头或代理转发配置问题（默认局域网直连场景不应再出现）
 
 ### API Key 管理
@@ -479,6 +483,14 @@ python mcp_server.py --http --port 8900 /path/to/pods
 claude mcp add --transport http ios-components http://your-server:8900/mcp \
   --header "Authorization: Bearer sk-xxx"
 ```
+
+LAN notes:
+
+- Use `http://<your-lan-ip>:8900/webhook/health` for liveness checks instead of opening `GET /mcp` in a browser
+- `/mcp` is a Streamable HTTP MCP endpoint, so clients should initialize via the MCP protocol instead of plain HTTP probing
+- If API keys are enabled, clients must send `Authorization: Bearer sk-xxx`
+- OAuth auto-discovery endpoints are not exposed; clients that require `/.well-known/oauth-authorization-server*` should use direct MCP HTTP with Bearer auth instead
+- To better align with current Codex / OpenAI MCP clients, discovery-stage methods such as `initialize` and `tools/list` are allowed without auth while actual tool execution can still require a Bearer token
 
 ### API Key Management
 

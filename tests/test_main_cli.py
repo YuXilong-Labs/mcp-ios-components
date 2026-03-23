@@ -18,8 +18,10 @@ class _DummyRouter:
 class _DummyMcpApp:
     def __init__(self):
         self.router = _DummyRouter()
+        self.calls = []
 
     async def __call__(self, scope, receive, send):
+        self.calls.append({"scope": dict(scope)})
         return None
 
 
@@ -150,6 +152,85 @@ class TestMainCli(unittest.TestCase):
         self.assertEqual(fake_settings.port, 8900)
         self.assertTrue(fake_settings.transport_security.enable_dns_rebinding_protection)
 
+    def test_is_plain_mcp_probe_request(self):
+        s = self._server()
+
+        self.assertTrue(
+            s._is_plain_mcp_probe_request(
+                {
+                    "type": "http",
+                    "method": "GET",
+                    "path": "/mcp",
+                    "headers": [],
+                }
+            )
+        )
+
+        self.assertFalse(
+            s._is_plain_mcp_probe_request(
+                {
+                    "type": "http",
+                    "method": "GET",
+                    "path": "/mcp",
+                    "headers": [(b"mcp-session-id", b"abc")],
+                }
+            )
+        )
+
+        self.assertFalse(
+            s._is_plain_mcp_probe_request(
+                {
+                    "type": "http",
+                    "method": "POST",
+                    "path": "/mcp",
+                    "headers": [],
+                }
+            )
+        )
+
+    def test_probe_response_helpers(self):
+        s = self._server()
+
+        response_data = s._build_mcp_probe_payload("10.0.0.2", 8900, True)
+        self.assertEqual(response_data["auth"], "bearer")
+        self.assertEqual(response_data["mcp_endpoint"], "http://10.0.0.2:8900/mcp")
+
+        oauth_response = s._build_oauth_not_supported_payload("10.0.0.2", 8900, False)
+        self.assertEqual(oauth_response["error"], "oauth_discovery_not_supported")
+        self.assertEqual(oauth_response["auth"], "none")
+        self.assertIn("Bearer API Key", oauth_response["message"])
+
+    def test_extract_jsonrpc_method_helpers(self):
+        s = self._server()
+
+        self.assertEqual(
+            s._extract_jsonrpc_method_from_body(b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'),
+            "initialize",
+        )
+        self.assertEqual(s._extract_jsonrpc_method_from_body(b"not-json"), "")
+        self.assertTrue(s._is_public_mcp_discovery_method("tools/list"))
+        self.assertFalse(s._is_public_mcp_discovery_method("tools/call"))
+
+    def test_build_replay_receive_keeps_connection_open(self):
+        s = self._server()
+
+        async def _run():
+            receive = s._build_replay_receive(b'{"a":1}')
+            first = await receive()
+            try:
+                await asyncio.wait_for(receive(), timeout=0.05)
+            except TimeoutError:
+                second = "pending"
+            else:
+                second = "unexpected"
+            return first, second
+
+        first, second = asyncio.run(_run())
+        self.assertEqual(first["type"], "http.request")
+        self.assertEqual(first["body"], b'{"a":1}')
+        self.assertFalse(first["more_body"])
+        self.assertEqual(second, "pending")
+
     def test_main_http_branch_with_fake_modules(self):
         s = self._server()
 
@@ -231,6 +312,39 @@ class TestMainCli(unittest.TestCase):
 
         async def send(_msg):
             return None
+
+        # plain GET /mcp probe should return a diagnostic response instead of falling through
+        s.load_api_keys = lambda: {}  # noqa: E731
+        s.validate_api_key = lambda _k, _v: True  # noqa: E731
+        scope_probe = {"type": "http", "method": "GET", "path": "/mcp", "headers": []}
+        asyncio.run(mount.app(scope_probe, receive, send))
+
+        # OAuth discovery path should get an explicit unsupported response
+        scope_oauth = {"type": "http", "method": "GET", "path": "/.well-known/oauth-authorization-server/mcp", "headers": []}
+        asyncio.run(mount.app(scope_oauth, receive, send))
+
+        async def make_receive(body: bytes):
+            sent = False
+
+            async def _receive():
+                nonlocal sent
+                if not sent:
+                    sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                return {"type": "http.disconnect"}
+
+            return _receive
+
+        # initialize/tools/list discovery should bypass auth for mixed-auth discovery flows
+        s.load_api_keys = lambda: {"x": "u"}  # noqa: E731
+        validate_calls = []
+        s.validate_api_key = lambda _k, _v: validate_calls.append((_k, _v)) or False  # noqa: E731
+        init_receive = asyncio.run(make_receive(b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'))
+        scope_init = {"type": "http", "method": "POST", "path": "/mcp", "headers": []}
+        before_calls = len(fake_mcp_app.calls)
+        asyncio.run(mount.app(scope_init, init_receive, send))
+        self.assertEqual(len(validate_calls), 0)
+        self.assertEqual(len(fake_mcp_app.calls), before_calls + 1)
 
         # auth path unauthorized then authorized
         s.load_api_keys = lambda: {"x": "u"}  # noqa: E731
