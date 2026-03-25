@@ -359,9 +359,13 @@ docs/api/
 
 每个组件文档包含：
 - 组件概述（来自 podspec summary/description）
-- 按文件分组的 API 列表（声明 + 结构化参数/返回值说明）
+- 按类/协议聚合的 API 列表（Category 方法归属宿主类）
+- 枚举类型章节（NS_ENUM/NS_OPTIONS 成员表格）
+- typedef / block 类型定义
+- 废弃 API 标注（NS_DEPRECATED_IOS / @available 等，含迁移建议）
+- 注释自动拆分为摘要 + 详细说明
 - 跨组件调用示例（自动扫描其他组件的 import/使用）
-- AI 生成的说明会标记 `> *AI 生成*` 以便区分
+- AI 生成的说明会标记 `> *AI 生成*` 并附带调用示例代码
 
 ## 缓存机制
 
