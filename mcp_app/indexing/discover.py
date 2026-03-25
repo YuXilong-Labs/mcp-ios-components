@@ -7,6 +7,43 @@ import re
 from typing import Callable
 
 
+def _merge_multiline_arrays(content: str) -> str:
+    """将跨行的 Ruby 数组赋值合并为单行。
+
+    例如：
+        SUPPORT_MIXUP = [
+          'PLA' => 'PLAHTLS',
+          'VO' => 'VOOStream',
+        ]
+    合并为：
+        SUPPORT_MIXUP = ['PLA' => 'PLAHTLS', 'VO' => 'VOOStream',]
+    """
+    lines = content.split("\n")
+    merged = []
+    buf = ""
+    in_array = False
+
+    for line in lines:
+        if not in_array:
+            # 检测 VAR = [ 且同行没有 ]
+            if re.search(r"\w+\s*=\s*\[", line) and "]" not in line:
+                buf = line.rstrip()
+                in_array = True
+            else:
+                merged.append(line)
+        else:
+            buf += " " + line.strip()
+            if "]" in line:
+                merged.append(buf)
+                buf = ""
+                in_array = False
+
+    if buf:
+        merged.append(buf)
+
+    return "\n".join(merged)
+
+
 def discover_components(
     pods_dir: str,
     return_filtered: bool = False,
@@ -51,12 +88,18 @@ def discover_components(
         has_nonempty_mixup = False
         mixup_values = []
 
-        for line in spec_content.split("\n"):
+        # 支持多行数组解析：先将 podspec 中跨行的 SUPPORT_MIXUP = [...] 合并为单行
+        # 注意：只检查正式 SUPPORT_MIXUP，BETA_SUPPORT_MIXUP 不作为过滤依据
+        # （基础组件可能有 BETA 标记但没有正式 MIXUP）
+        merged_content = _merge_multiline_arrays(spec_content)
+
+        for line in merged_content.split("\n"):
             stripped = line.strip()
             if stripped.startswith("#") or stripped.startswith("//"):
                 continue
 
-            mixup_match = re.search(rf"((?:{mixup_marker}|BETA_{mixup_marker})\s*=\s*\[[^\]]*\])", stripped)
+            # 只匹配正式 SUPPORT_MIXUP，不匹配 BETA_SUPPORT_MIXUP
+            mixup_match = re.search(rf"(?<!\w)({mixup_marker}\s*=\s*\[[^\]]*\])", stripped)
             if mixup_match:
                 mixup_values.append(mixup_match.group(1))
                 array_match = re.search(r"=\s*\[([^\]]*)\]", mixup_match.group(1))
