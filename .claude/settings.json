@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_response.filePath') && if echo \"$f\" | grep -qE '\\.py$'; then ruff format --quiet \"$f\" && ruff check --fix --quiet \"$f\"; fi 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "Formatting with ruff..."
+          },
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_response.filePath') && if echo \"$f\" | grep -qE '/tests/test_.*\\.py$'; then PYTHONPATH=. .venv/bin/pytest \"$f\" --tb=short -q 2>&1 | tail -10; fi 2>/dev/null || true",
+            "timeout": 30,
+            "statusMessage": "Running pytest..."
+          }
+        ]
+      }
+    ]
+  }
+}
