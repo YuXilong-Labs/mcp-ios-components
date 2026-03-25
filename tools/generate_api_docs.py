@@ -503,9 +503,26 @@ def main():
     parser.add_argument("--ai-fill", action="store_true", help="启用 AI 补全缺注释的 API")
     parser.add_argument("--dry-run", action="store_true", help="仅统计缺注释数量，不生成文档")
     parser.add_argument("--component", default="", help="指定单个组件名（可选）")
+    parser.add_argument(
+        "--format", default="markdown", choices=["markdown", "lark"],
+        help="输出格式：markdown（默认）或 lark（飞书 DocX Block JSON）",
+    )
+    parser.add_argument("--upload", action="store_true", help="上传到飞书知识库（需配合 --space-id --parent-node）")
+    parser.add_argument("--space-id", default="", help="飞书知识库 space_id")
+    parser.add_argument("--parent-node", default="", help="飞书知识库父节点 token")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+
+    # 参数校验
+    if args.upload and not args.space_id:
+        print("错误：使用 --upload 时必须指定 --space-id", file=sys.stderr)
+        sys.exit(1)
+    if args.upload and not args.parent_node:
+        print("错误：使用 --upload 时必须指定 --parent-node", file=sys.stderr)
+        sys.exit(1)
+    if args.upload and args.format != "lark":
+        args.format = "lark"  # --upload 隐含 --format lark
 
     # 确定索引缓存路径
     cache_path = args.index_cache
@@ -553,9 +570,19 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     pods_dir = args.pods_dir or ""
-    generated = 0
 
-    # 生成每个组件的文档
+    # 根据格式分派
+    if args.format == "lark":
+        _generate_lark(index, pods_dir, output_dir, ai_results, args)
+    else:
+        _generate_markdown(index, pods_dir, output_dir, ai_results, args)
+
+
+def _generate_markdown(
+    index: dict, pods_dir: str, output_dir: str, ai_results: dict | None, args: argparse.Namespace,
+) -> None:
+    """Markdown 格式生成（原有逻辑）。"""
+    generated = 0
     for comp in sorted(index.values(), key=lambda c: c["name"]):
         name = comp["name"]
         if args.component and name != args.component:
@@ -568,7 +595,6 @@ def main():
         generated += 1
         logger.info("  ✓ %s → %s", name, out_path)
 
-    # 生成目录页
     if not args.component:
         index_doc = generate_index_page(index)
         index_path = os.path.join(output_dir, "index.md")
@@ -577,6 +603,67 @@ def main():
         logger.info("  ✓ 目录页 → %s", index_path)
 
     logger.info("\n完成！共生成 %d 个组件文档，输出目录: %s", generated, output_dir)
+
+
+def _generate_lark(
+    index: dict, pods_dir: str, output_dir: str, ai_results: dict | None, args: argparse.Namespace,
+) -> None:
+    """飞书 DocX 格式生成（+ 可选上传）。"""
+    from tools.lark_doc_formatter import convert_component_to_blocks, convert_index_to_blocks
+
+    # 初始化飞书客户端（仅上传时需要）
+    lark_client = None
+    if args.upload:
+        from mcp_app.integrations.lark_client import LarkClient
+        lark_client = LarkClient()
+
+    generated = 0
+    upload_results = []
+
+    for comp in sorted(index.values(), key=lambda c: c["name"]):
+        name = comp["name"]
+        if args.component and name != args.component:
+            continue
+
+        blocks = convert_component_to_blocks(comp, index, pods_dir, ai_results)
+
+        if args.upload and lark_client:
+            # 上传到飞书知识库
+            node = lark_client.create_wiki_node(args.space_id, args.parent_node, name)
+            doc_id = node["obj_token"]
+            lark_client.append_body_blocks(doc_id, doc_id, blocks)
+            upload_results.append({"name": name, "node_token": node["node_token"], "obj_token": doc_id})
+            logger.info("  ✓ %s → 飞书文档 %s", name, doc_id)
+        else:
+            # 输出 JSON 到本地
+            out_path = os.path.join(output_dir, f"{name}.json")
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump({"component": name, "blocks": blocks}, f, ensure_ascii=False, indent=2)
+            logger.info("  ✓ %s → %s", name, out_path)
+
+        generated += 1
+
+    # 目录页
+    if not args.component:
+        index_blocks = convert_index_to_blocks(index)
+        if args.upload and lark_client:
+            node = lark_client.create_wiki_node(args.space_id, args.parent_node, "iOS 基础库 API 文档")
+            doc_id = node["obj_token"]
+            lark_client.append_body_blocks(doc_id, doc_id, index_blocks)
+            logger.info("  ✓ 目录页 → 飞书文档 %s", doc_id)
+        else:
+            index_path = os.path.join(output_dir, "index.json")
+            with open(index_path, "w", encoding="utf-8") as f:
+                json.dump({"component": "_index", "blocks": index_blocks}, f, ensure_ascii=False, indent=2)
+            logger.info("  ✓ 目录页 → %s", index_path)
+
+    mode = "上传到飞书" if args.upload else f"输出目录: {output_dir}"
+    logger.info("\n完成！共生成 %d 个组件文档（飞书格式），%s", generated, mode)
+
+    if upload_results:
+        logger.info("\n上传结果：")
+        for r in upload_results:
+            logger.info("  %s: node=%s, doc=%s", r["name"], r["node_token"], r["obj_token"])
 
 
 if __name__ == "__main__":
