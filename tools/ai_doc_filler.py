@@ -51,7 +51,8 @@ def build_prompt(declaration: str, source_context: str, component_name: str) -> 
 1. 用 1-2 句话描述方法的功能和用途
 2. 如果有参数，列出每个参数的含义（格式：`参数名` — 说明）
 3. 如果有返回值，说明返回值含义
-4. 语言简洁，不要废话
+4. 给出一段简短的调用示例代码（与声明语言一致，ObjC 或 Swift）
+5. 语言简洁，不要废话
 
 ## 输出格式（严格遵循）
 功能说明
@@ -60,6 +61,12 @@ def build_prompt(declaration: str, source_context: str, component_name: str) -> 
 - `参数名` — 说明
 
 **返回值：** 说明
+
+**示例：**
+```objc
+// 或 swift，与声明语言一致
+调用示例代码
+```
 """
 
 

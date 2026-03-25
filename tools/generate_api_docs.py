@@ -119,7 +119,7 @@ def generate_component_doc(
     pods_dir: str,
     ai_results: dict | None = None,
 ) -> str:
-    """为单个组件生成 Markdown 文档。"""
+    """为单个组件生成 Markdown 文档（按类/协议聚合展示）。"""
     name = comp["name"]
     summary = comp.get("summary", "")
     description = comp.get("description", "")
@@ -131,51 +131,40 @@ def generate_component_doc(
         lines.append(f"\n{description}")
 
     # 统计信息
-    api_count = len(comp.get("apis", []))
+    apis = comp.get("apis", [])
+    api_count = len(apis)
     source_count = comp.get("source_count", 0)
     lines.append(f"\n**API 数量：** {api_count} | **源文件数：** {source_count}")
     lines.append("\n---\n")
 
-    # 按文件分组 API
-    apis = comp.get("apis", [])
     if not apis:
         lines.append("*该组件未发现公开 API 声明。*")
     else:
-        lines.append("## API 列表\n")
-        by_file: dict[str, list] = {}
-        for api in apis:
-            file_key = api.get("file", "<unknown>")
-            by_file.setdefault(file_key, []).append(api)
+        # 按类/协议聚合
+        class_groups, enums, typedefs, standalone = _group_apis_by_class(apis)
 
-        for file_path in sorted(by_file.keys()):
-            file_apis = by_file[file_path]
-            lines.append(f"### 📄 {file_path}\n")
+        # 类/协议章节
+        for class_name in sorted(class_groups.keys()):
+            group = class_groups[class_name]
+            _render_class_section(lines, class_name, group, name, ai_results)
 
-            for api in file_apis:
-                kind = api.get("kind", "")
-                api_name = api.get("name", "")
-                declaration = api.get("declaration", "")
-                comment = (api.get("comment") or "").strip()
+        # 枚举章节
+        if enums:
+            lines.append("## 枚举类型\n")
+            for enum_info in enums:
+                _render_enum_section(lines, enum_info)
 
-                # 标题：kind + name
-                kind_label = _kind_label(kind)
-                lines.append(f"#### {kind_label} `{api_name}`\n")
+        # typedef 章节
+        if typedefs:
+            lines.append("## 类型定义\n")
+            for td in typedefs:
+                _render_api_entry(lines, td, name, ai_results)
 
-                # 声明代码块
-                lang = "swift" if file_path.endswith(".swift") else "objc"
-                lines.append(f"```{lang}\n{declaration}\n```\n")
-
-                # 注释/说明
-                if comment:
-                    cleaned = _clean_comment(comment)
-                    lines.append(f"{cleaned}\n")
-                elif ai_results and name in ai_results and api_name in ai_results[name]:
-                    ai_text = ai_results[name][api_name]
-                    lines.append(f"> *AI 生成*\n>\n> {_indent_blockquote(ai_text)}\n")
-                else:
-                    lines.append("*暂无说明*\n")
-
-                lines.append("---\n")
+        # 独立函数/其他
+        if standalone:
+            lines.append("## 函数与其他\n")
+            for api in standalone:
+                _render_api_entry(lines, api, name, ai_results)
 
     # 调用示例
     examples = find_usage_examples(index, name, pods_dir)
@@ -192,6 +181,186 @@ def generate_component_doc(
     lines.append(f"\n---\n*文档自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}*")
 
     return "\n".join(lines)
+
+
+def _group_apis_by_class(apis: list) -> tuple[dict, list, list, list]:
+    """将 API 列表按类/协议聚合。
+
+    返回 (class_groups, enums, typedefs, standalone)：
+    - class_groups: {类名: {"definition": api|None, "categories": {cat_name: [apis]}, "members": [apis]}}
+    - enums: [{"definition": api, "members": [apis]}]
+    - typedefs: [api]
+    - standalone: [api]（不属于任何类的独立函数等）
+    """
+    class_groups: dict[str, dict] = {}
+    enums: list[dict] = []
+    enum_map: dict[str, dict] = {}  # enum_name -> {"definition": api, "members": []}
+    typedefs: list[dict] = []
+    standalone: list[dict] = []
+
+    for api in apis:
+        kind = api.get("kind", "")
+        host_class = api.get("host_class", "")
+        category = api.get("category", "")
+        enum_type = api.get("enum_type", "")
+
+        if kind == "enum":
+            enum_map[api["name"]] = {"definition": api, "members": []}
+            continue
+
+        if kind == "enum_case":
+            if enum_type in enum_map:
+                enum_map[enum_type]["members"].append(api)
+            continue
+
+        if kind == "typedef":
+            typedefs.append(api)
+            continue
+
+        if kind in ("interface", "protocol"):
+            cls_name = api["name"]
+            if cls_name not in class_groups:
+                class_groups[cls_name] = {"definition": None, "categories": {}, "members": []}
+            if category:
+                class_groups[cls_name]["categories"].setdefault(category, [])
+            else:
+                class_groups[cls_name]["definition"] = api
+            continue
+
+        # 有宿主类的成员
+        if host_class:
+            if host_class not in class_groups:
+                class_groups[host_class] = {"definition": None, "categories": {}, "members": []}
+            if category:
+                class_groups[host_class]["categories"].setdefault(category, []).append(api)
+            else:
+                class_groups[host_class]["members"].append(api)
+            continue
+
+        # 独立函数
+        if kind in ("func",):
+            standalone.append(api)
+            continue
+
+        # 其他无宿主类的方法/属性 — 也归到独立区域
+        standalone.append(api)
+
+    enums = list(enum_map.values())
+    return class_groups, enums, typedefs, standalone
+
+
+def _render_class_section(lines: list, class_name: str, group: dict, comp_name: str, ai_results: dict | None):
+    """渲染单个类/协议的文档章节。"""
+    definition = group.get("definition")
+    categories = group.get("categories", {})
+    members = group.get("members", [])
+
+    # 类标题
+    if definition:
+        kind_label = _kind_label(definition.get("kind", "interface"))
+        deprecated_tag = _deprecated_tag(definition)
+        lines.append(f"## {kind_label} `{class_name}` {deprecated_tag}\n")
+
+        # 声明
+        file_path = definition.get("file", "")
+        lang = "swift" if file_path.endswith(".swift") else "objc"
+        lines.append(f"```{lang}\n{definition['declaration']}\n```\n")
+
+        # 注释
+        comment = (definition.get("comment") or "").strip()
+        if comment:
+            abstract, discussion = _split_abstract_discussion(comment)
+            lines.append(f"**{abstract}**\n")
+            if discussion:
+                lines.append(f"{discussion}\n")
+        lines.append(f"📄 `{file_path}`\n")
+    else:
+        lines.append(f"## 📦 `{class_name}`\n")
+
+    # 直属成员
+    if members:
+        props = [m for m in members if m.get("kind") in ("property", "var", "let")]
+        methods = [m for m in members if m.get("kind") not in ("property", "var", "let")]
+
+        if props:
+            lines.append("### 属性\n")
+            for p in props:
+                _render_api_entry(lines, p, comp_name, ai_results, heading_level=4)
+
+        if methods:
+            lines.append("### 方法\n")
+            for m in methods:
+                _render_api_entry(lines, m, comp_name, ai_results, heading_level=4)
+
+    # Category 成员
+    for cat_name, cat_apis in sorted(categories.items()):
+        if not cat_apis:
+            continue
+        cat_label = cat_name or "匿名"
+        lines.append(f"### Category: {cat_label}\n")
+        for api in cat_apis:
+            _render_api_entry(lines, api, comp_name, ai_results, heading_level=4)
+
+    lines.append("---\n")
+
+
+def _render_enum_section(lines: list, enum_info: dict):
+    """渲染枚举章节。"""
+    definition = enum_info["definition"]
+    members = enum_info["members"]
+    deprecated_tag = _deprecated_tag(definition)
+
+    lines.append(f"### 📦 枚举 `{definition['name']}` {deprecated_tag}\n")
+    lines.append(f"```objc\n{definition['declaration']}\n```\n")
+
+    comment = (definition.get("comment") or "").strip()
+    if comment:
+        abstract, discussion = _split_abstract_discussion(comment)
+        lines.append(f"**{abstract}**\n")
+        if discussion:
+            lines.append(f"{discussion}\n")
+
+    if members:
+        lines.append("| 成员 | 说明 |")
+        lines.append("|------|------|")
+        for m in members:
+            mc = _clean_comment(m.get("comment", "")).split("\n")[0] if m.get("comment") else "—"
+            lines.append(f"| `{m['name']}` | {mc} |")
+        lines.append("")
+
+    lines.append("---\n")
+
+
+def _render_api_entry(lines: list, api: dict, comp_name: str, ai_results: dict | None, heading_level: int = 4):
+    """渲染单个 API 条目。"""
+    kind = api.get("kind", "")
+    api_name = api.get("name", "")
+    declaration = api.get("declaration", "")
+    comment = (api.get("comment") or "").strip()
+    file_path = api.get("file", "")
+
+    kind_label = _kind_label(kind)
+    deprecated_tag = _deprecated_tag(api)
+    heading = "#" * heading_level
+    lines.append(f"{heading} {kind_label} `{api_name}` {deprecated_tag}\n")
+
+    lang = "swift" if file_path.endswith(".swift") else "objc"
+    lines.append(f"```{lang}\n{declaration}\n```\n")
+
+    if comment:
+        abstract, discussion = _split_abstract_discussion(comment)
+        if discussion:
+            lines.append(f"**{abstract}**\n")
+            rest = _clean_comment("\n".join(comment.split("\n")[1:]))
+            if rest:
+                lines.append(f"{rest}\n")
+        else:
+            lines.append(f"{_clean_comment(comment)}\n")
+    elif ai_results and comp_name in ai_results and api_name in ai_results[comp_name]:
+        ai_text = ai_results[comp_name][api_name]
+        lines.append(f"> *AI 生成*\n>\n> {_indent_blockquote(ai_text)}\n")
+    else:
+        lines.append("*暂无说明*\n")
 
 
 def generate_index_page(components: dict) -> str:
@@ -214,6 +383,52 @@ def generate_index_page(components: dict) -> str:
     return "\n".join(lines)
 
 
+def _deprecated_tag(api: dict) -> str:
+    """从 API 记录中生成废弃标签。"""
+    dep = api.get("deprecated")
+    if not dep:
+        return ""
+    parts = ["⚠️ 已废弃"]
+    if dep.get("since") and dep.get("until"):
+        parts.append(f"(iOS {dep['since']}–{dep['until']})")
+    if dep.get("message"):
+        parts.append(f"— {dep['message']}")
+    if dep.get("replacement"):
+        parts.append(f"→ `{dep['replacement']}`")
+    return " ".join(parts)
+
+
+def _split_abstract_discussion(comment: str) -> tuple[str, str]:
+    """将注释拆分为摘要（第一段）和详细讨论（后续段落）。
+
+    摘要为注释清理后的第一个非空行，讨论为其余内容。
+    """
+    # 先清理注释标记
+    raw_lines = comment.split("\n")
+    cleaned = []
+    for line in raw_lines:
+        line = line.strip()
+        if line.startswith("///"):
+            line = line[3:].strip()
+        elif line.startswith("/**"):
+            line = line[3:].strip()
+        elif line.startswith("*/"):
+            continue
+        elif line.startswith("*"):
+            line = line[1:].strip()
+        cleaned.append(line)
+
+    text = "\n".join(cleaned).strip()
+    if not text:
+        return "", ""
+
+    # 按空行或首个换行拆分
+    parts = text.split("\n", 1)
+    abstract = parts[0].strip()
+    discussion = parts[1].strip() if len(parts) > 1 else ""
+    return abstract, discussion
+
+
 def _kind_label(kind: str) -> str:
     """将 kind 转换为中文标签。"""
     mapping = {
@@ -222,11 +437,13 @@ def _kind_label(kind: str) -> str:
         "class": "📦 类",
         "struct": "📦 结构体",
         "enum": "📦 枚举",
+        "enum_case": "📎 枚举值",
         "method": "🔧 方法",
         "func": "🔧 函数",
         "property": "📌 属性",
         "var": "📌 变量",
         "let": "📌 常量",
+        "typedef": "🏷️ 类型定义",
         "typealias": "🏷️ 类型别名",
         "init": "🔧 初始化",
     }
