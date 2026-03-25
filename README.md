@@ -316,6 +316,53 @@ Server 自动扫描组件目录中包含 `.podspec` 的子目录。默认过滤�
 - `access_control.exclude_from_index` 命中的组件
 - 默认安全兜底：`BTRtcEngine`
 
+## API 文档自动生成
+
+内置工具可从索引缓存自动生成每个组件的 Markdown API 文档，包含方法签名、注释说明、调用示例。对缺注释的 API 可选用 AI（Claude Haiku）自动补全说明。
+
+```bash
+# 基础生成（需要先有索引缓存 .cache/index.json）
+python tools/generate_api_docs.py --pods-dir /path/to/Pods
+
+# 指定单个组件
+python tools/generate_api_docs.py --pods-dir /path/to/Pods --component BTBaseKit
+
+# 预估缺注释 API 数量（不生成文档、不调用 AI）
+python tools/generate_api_docs.py --dry-run
+
+# 带 AI 补全生成（需要 ANTHROPIC_API_KEY 环境变量）
+ANTHROPIC_API_KEY=sk-ant-xxx python tools/generate_api_docs.py --pods-dir /path/to/Pods --ai-fill
+
+# 自定义输出目录
+python tools/generate_api_docs.py --pods-dir /path/to/Pods --output-dir ./my-docs
+```
+
+参数说明：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--pods-dir` | Pods 源码目录（用于读取源码和查找调用示例） | 无 |
+| `--index-cache` | 索引缓存 JSON 路径 | `.cache/index.json` |
+| `--output-dir` | 输出目录 | `docs/api/` |
+| `--component` | 指定单个组件名 | 全部组件 |
+| `--ai-fill` | 启用 AI 补全缺注释的 API（需要 `ANTHROPIC_API_KEY`） | 关闭 |
+| `--dry-run` | 仅统计缺注释数量，不生成文档 | 关闭 |
+
+生成的文档结构：
+```text
+docs/api/
+├── index.md          # 目录页（组件列表 + 链接）
+├── BTBaseKit.md      # 组件 API 文档
+├── BTNetwork.md
+└── ...
+```
+
+每个组件文档包含：
+- 组件概述（来自 podspec summary/description）
+- 按文件分组的 API 列表（声明 + 结构化参数/返回值说明）
+- 跨组件调用示例（自动扫描其他组件的 import/使用）
+- AI 生成的说明会标记 `> *AI 生成*` 以便区分
+
 ## 缓存机制
 
 索引缓存在 `.cache/index.json`，基于文件路径和修改时间的 SHA256 哈希。源文件变更时自动重建。
@@ -527,6 +574,33 @@ The server scans subdirectories with `.podspec` files and applies default filter
 - Non-empty `SUPPORT_MIXUP` / `BETA_SUPPORT_MIXUP` in podspec
 - Components matched by `access_control.exclude_from_index`
 - Safety default component: `BTRtcEngine`
+
+## API Documentation Generator
+
+Built-in tool to auto-generate Markdown API docs from the index cache, including method signatures, comments, and usage examples. Optionally uses AI (Claude Haiku) to fill in missing comments.
+
+```bash
+# Basic generation (requires .cache/index.json)
+python tools/generate_api_docs.py --pods-dir /path/to/Pods
+
+# Single component
+python tools/generate_api_docs.py --pods-dir /path/to/Pods --component BTBaseKit
+
+# Estimate missing comments count (no docs generated, no AI calls)
+python tools/generate_api_docs.py --dry-run
+
+# With AI fill (requires ANTHROPIC_API_KEY)
+ANTHROPIC_API_KEY=sk-ant-xxx python tools/generate_api_docs.py --pods-dir /path/to/Pods --ai-fill
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--pods-dir` | Pods source directory | (none) |
+| `--index-cache` | Index cache JSON path | `.cache/index.json` |
+| `--output-dir` | Output directory | `docs/api/` |
+| `--component` | Generate for a single component | all |
+| `--ai-fill` | Use AI to fill missing comments (needs `ANTHROPIC_API_KEY`) | off |
+| `--dry-run` | Only count missing comments, skip generation | off |
 
 ## Caching
 
