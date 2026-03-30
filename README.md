@@ -369,49 +369,47 @@ docs/api/
 
 ### 上传到飞书知识库
 
-支持将文档以飞书 DocX 格式上传到指定知识库空间。
+支持将文档上传到飞书知识库，使用飞书官方 CLI 工具 [lark-cli](https://github.com/larksuite/cli)。
 
 **前置条件：**
-1. 在[飞书开放平台](https://open.larksuite.com)创建应用
-2. 开通权限：`docx:document`（文档读写）+ `wiki:wiki`（知识库读写）
-3. 将应用添加为知识库管理员或协作者
+1. 安装 lark-cli：`npm install -g @larksuite/cli`
+2. 初始化配置：`lark-cli config init`
+3. 登录授权：`lark-cli auth login --recommend`
 
 ```bash
-# 仅生成飞书格式 JSON（不上传）
+# 仅生成飞书格式 JSON（不上传，保留旧方式）
 python tools/generate_api_docs.py --format lark --pods-dir /path/to/Pods
 
-# 上传到飞书知识库
-LARK_APP_ID=cli_xxx LARK_APP_SECRET=xxx \
+# 上传到飞书知识库（通过 lark-cli）
 python tools/generate_api_docs.py \
-  --format lark --upload \
-  --space-id 7xxx --parent-node wikcnXxx \
+  --upload --space-id 7xxx --parent-node wikcnXxx \
+  --pods-dir /path/to/Pods
+
+# 预览上传内容（不实际执行）
+python tools/generate_api_docs.py \
+  --upload --preview --space-id 7xxx --parent-node wikcnXxx \
   --pods-dir /path/to/Pods
 
 # 上传单个组件
-LARK_APP_ID=cli_xxx LARK_APP_SECRET=xxx \
 python tools/generate_api_docs.py \
-  --format lark --upload \
-  --space-id 7xxx --parent-node wikcnXxx \
+  --upload --space-id 7xxx --parent-node wikcnXxx \
   --pods-dir /path/to/Pods --component BTBaseKit
 
-# 国内飞书域名
-LARK_DOMAIN=https://open.feishu.cn \
-LARK_APP_ID=cli_xxx LARK_APP_SECRET=xxx \
-python tools/generate_api_docs.py --format lark --upload \
-  --space-id 7xxx --parent-node wikcnXxx --pods-dir /path/to/Pods
+# 上传本地 Markdown 文件
+python tools/generate_api_docs.py \
+  --upload --space-id 7xxx --parent-node wikcnXxx \
+  --pods-dir /path/to/Pods --component BTBaseKit
 ```
 
-飞书相关参数：
+飞书上传参数：
 
-| 参数/变量 | 说明 | 默认值 |
-|----------|------|--------|
-| `--format lark` | 输出飞书 DocX Block 格式 | `markdown` |
-| `--upload` | 上传到飞书知识库（隐含 `--format lark`） | 关闭 |
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--upload` | 上传到飞书知识库（依赖 lark-cli） | 关闭 |
+| `--preview` | 预览上传内容，不实际执行 | 关闭 |
 | `--space-id` | 知识库 space_id | 无 |
-| `--parent-node` | 父节点 token | 无 |
-| `LARK_APP_ID` | 飞书应用 App ID | 无 |
-| `LARK_APP_SECRET` | 飞书应用 App Secret | 无 |
-| `LARK_DOMAIN` | 飞书 API 域名 | `https://open.larksuite.com` |
+| `--parent-node` | 父节点 token（wikcnXxx 格式） | 无 |
+| `--format lark` | 输出飞书 DocX Block JSON（仅本地输出） | `markdown` |
 
 ## 缓存机制
 
@@ -654,34 +652,40 @@ ANTHROPIC_API_KEY=sk-ant-xxx python tools/generate_api_docs.py --pods-dir /path/
 
 ### Upload to Lark Wiki
 
-Upload docs as Lark DocX documents to a wiki space.
+Upload docs to a Lark wiki space using the official [lark-cli](https://github.com/larksuite/cli) tool.
 
 **Prerequisites:**
-1. Create an app at [Lark Open Platform](https://open.larksuite.com)
-2. Enable permissions: `docx:document` + `wiki:wiki`
-3. Add the app as wiki admin or collaborator
+1. Install lark-cli: `npm install -g @larksuite/cli`
+2. Initialize config: `lark-cli config init`
+3. Login: `lark-cli auth login --recommend`
 
 ```bash
-# Generate Lark DocX JSON locally (no upload)
+# Generate Lark DocX JSON locally (no upload, legacy mode)
 python tools/generate_api_docs.py --format lark --pods-dir /path/to/Pods
 
-# Upload to Lark Wiki
-LARK_APP_ID=cli_xxx LARK_APP_SECRET=xxx \
+# Upload to Lark Wiki (via lark-cli)
 python tools/generate_api_docs.py \
-  --format lark --upload \
-  --space-id 7xxx --parent-node wikcnXxx \
+  --upload --space-id 7xxx --parent-node wikcnXxx \
   --pods-dir /path/to/Pods
+
+# Preview upload (dry-run, no actual upload)
+python tools/generate_api_docs.py \
+  --upload --preview --space-id 7xxx --parent-node wikcnXxx \
+  --pods-dir /path/to/Pods
+
+# Upload single component
+python tools/generate_api_docs.py \
+  --upload --space-id 7xxx --parent-node wikcnXxx \
+  --pods-dir /path/to/Pods --component BTBaseKit
 ```
 
-| Flag / Env Var | Description | Default |
-|----------------|-------------|---------|
-| `--format lark` | Output Lark DocX Block format | `markdown` |
-| `--upload` | Upload to Lark Wiki (implies `--format lark`) | off |
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--upload` | Upload to Lark Wiki (requires lark-cli) | off |
+| `--preview` | Preview upload content without executing | off |
 | `--space-id` | Wiki space ID | (none) |
-| `--parent-node` | Parent node token | (none) |
-| `LARK_APP_ID` | Lark app ID | (none) |
-| `LARK_APP_SECRET` | Lark app secret | (none) |
-| `LARK_DOMAIN` | Lark API domain | `https://open.larksuite.com` |
+| `--parent-node` | Parent node token (wikcnXxx format) | (none) |
+| `--format lark` | Output Lark DocX Block JSON (local only) | `markdown` |
 
 ## Caching
 

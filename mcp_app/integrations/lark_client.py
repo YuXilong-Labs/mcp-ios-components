@@ -1,4 +1,7 @@
-"""飞书（Lark）DocX + Wiki API 封装。
+"""飞书（Lark）DocX + Wiki API 封装（已废弃）。
+
+⚠️ 已废弃：上传功能已迁移到 tools/lark_cli_wrapper.py（基于官方 lark-cli）。
+本模块仅保留供 tools/lark_doc_formatter.py 的 LANG_MAP 引用和 --format lark 本地输出。
 
 使用 tenant_access_token 认证，支持：
 - 创建知识库文档节点
@@ -47,7 +50,7 @@ class LarkAPIError(RuntimeError):
 
 
 class LarkClient:
-    """飞书 API 客户端。
+    """飞书 API 客户端（已废弃，请使用 tools.lark_cli_wrapper.LarkCli）。
 
     认证方式：app_id + app_secret → tenant_access_token（自动刷新）。
     """
@@ -67,7 +70,11 @@ class LarkClient:
         self.app_secret = app_secret or os.environ.get("LARK_APP_SECRET", "")
         self.domain = (domain or os.environ.get("LARK_DOMAIN", "")).rstrip("/")
         if not self.domain:
-            self.domain = "https://open.larksuite.com"
+            # 国内飞书 app_id 以 cli_ 开头，自动选择对应域名
+            if self.app_id.startswith("cli_"):
+                self.domain = "https://open.feishu.cn"
+            else:
+                self.domain = "https://open.larksuite.com"
 
         self._token: str = ""
         self._token_expires: float = 0
@@ -162,12 +169,14 @@ class LarkClient:
 
         返回 {"node_token": "...", "obj_token": "..."（= document_id）}
         """
-        data = self._request("POST", f"/open-apis/wiki/v2/spaces/{space_id}/nodes", {
+        body: dict = {
             "obj_type": "docx",
             "node_type": "origin",
-            "parent_node_token": parent_node_token,
             "title": title,
-        })
+        }
+        if parent_node_token:
+            body["parent_node_token"] = parent_node_token
+        data = self._request("POST", f"/open-apis/wiki/v2/spaces/{space_id}/nodes", body)
         node = data.get("node", {})
         return {
             "node_token": node.get("node_token", ""),

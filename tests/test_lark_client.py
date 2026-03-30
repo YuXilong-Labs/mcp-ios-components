@@ -19,6 +19,10 @@ class TestLarkClientInit(unittest.TestCase):
         client = LarkClient(app_id="id", app_secret="secret")
         self.assertEqual(client.domain, "https://open.larksuite.com")
 
+    def test_feishu_domain_auto_detect(self):
+        client = LarkClient(app_id="cli_a686486c8578d02f", app_secret="secret")
+        self.assertEqual(client.domain, "https://open.feishu.cn")
+
     def test_custom_domain(self):
         client = LarkClient(app_id="id", app_secret="secret", domain="https://open.feishu.cn")
         self.assertEqual(client.domain, "https://open.feishu.cn")
@@ -159,6 +163,37 @@ class TestLarkClientWiki(unittest.TestCase):
         result = client.create_wiki_node("space123", "parent456", "Test Doc")
         self.assertEqual(result["node_token"], "wikcnABC")
         self.assertEqual(result["obj_token"], "docxDEF")
+
+        # 验证请求体包含 parent_node_token
+        call_args = mock_urlopen.call_args
+        sent_body = json.loads(call_args[0][0].data.decode())
+        self.assertEqual(sent_body["parent_node_token"], "parent456")
+
+    @patch("urllib.request.urlopen")
+    def test_create_wiki_node_no_parent(self, mock_urlopen):
+        """空 parent_node_token 时不发送该字段（创建在根目录）。"""
+        resp_body = json.dumps({
+            "code": 0,
+            "data": {"node": {"node_token": "wikcnRoot", "obj_token": "docxRoot"}},
+        }).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = resp_body
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        client = LarkClient(app_id="id", app_secret="secret")
+        client._token = "t-mock"
+        client._token_expires = 9999999999
+        client.REQUEST_INTERVAL = 0
+
+        result = client.create_wiki_node("space123", "", "Root Doc")
+        self.assertEqual(result["node_token"], "wikcnRoot")
+
+        # 验证请求体不含 parent_node_token
+        call_args = mock_urlopen.call_args
+        sent_body = json.loads(call_args[0][0].data.decode())
+        self.assertNotIn("parent_node_token", sent_body)
 
 
 class TestLarkClientBatch(unittest.TestCase):

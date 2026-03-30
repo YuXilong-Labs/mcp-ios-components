@@ -507,9 +507,10 @@ def main():
         "--format", default="markdown", choices=["markdown", "lark"],
         help="输出格式：markdown（默认）或 lark（飞书 DocX Block JSON）",
     )
-    parser.add_argument("--upload", action="store_true", help="上传到飞书知识库（需配合 --space-id --parent-node）")
+    parser.add_argument("--upload", action="store_true", help="上传到飞书知识库（需配合 --space-id，依赖 lark-cli）")
+    parser.add_argument("--preview", action="store_true", help="预览上传内容，不实际执行（映射 lark-cli --dry-run）")
     parser.add_argument("--space-id", default="", help="飞书知识库 space_id")
-    parser.add_argument("--parent-node", default="", help="飞书知识库父节点 token")
+    parser.add_argument("--parent-node", default="", help="飞书知识库父节点 token（wikcnXxx 格式，留空则创建在知识库根目录）")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
@@ -518,11 +519,18 @@ def main():
     if args.upload and not args.space_id:
         print("错误：使用 --upload 时必须指定 --space-id", file=sys.stderr)
         sys.exit(1)
-    if args.upload and not args.parent_node:
-        print("错误：使用 --upload 时必须指定 --parent-node", file=sys.stderr)
+    # parent-node 格式校验（应为 node_token，非中文名称）
+    if args.parent_node and not args.parent_node.startswith("wikcn"):
+        print(
+            f"警告：--parent-node '{args.parent_node}' 看起来不是有效的 node_token。\n"
+            "  node_token 格式通常为 wikcnXxx...，可在飞书知识库 URL 中找到。\n"
+            "  如需创建在知识库根目录，请省略 --parent-node 参数。",
+            file=sys.stderr,
+        )
         sys.exit(1)
     if args.upload and args.format != "lark":
-        args.format = "lark"  # --upload 隐含 --format lark
+        # --upload 时本地输出仍走 lark 格式（如需要），但上传走 markdown 路径
+        pass  # 不再强制 format=lark，上传通过 lark-cli 直接使用 markdown
 
     # 确定索引缓存路径
     cache_path = args.index_cache
@@ -571,8 +579,10 @@ def main():
 
     pods_dir = args.pods_dir or ""
 
-    # 根据格式分派
-    if args.format == "lark":
+    # 根据格式与模式分派
+    if args.upload:
+        _upload_via_lark_cli(index, pods_dir, output_dir, ai_results, args)
+    elif args.format == "lark":
         _generate_lark(index, pods_dir, output_dir, ai_results, args)
     else:
         _generate_markdown(index, pods_dir, output_dir, ai_results, args)
@@ -659,6 +669,59 @@ def _generate_lark(
 
     mode = "上传到飞书" if args.upload else f"输出目录: {output_dir}"
     logger.info("\n完成！共生成 %d 个组件文档（飞书格式），%s", generated, mode)
+
+    if upload_results:
+        logger.info("\n上传结果：")
+        for r in upload_results:
+            logger.info("  %s: node=%s, doc=%s", r["name"], r["node_token"], r["obj_token"])
+
+
+def _upload_via_lark_cli(
+    index: dict, pods_dir: str, output_dir: str, ai_results: dict | None, args: argparse.Namespace,
+) -> None:
+    """通过 lark-cli 上传 Markdown 文档到飞书知识库。"""
+    from tools.lark_cli_wrapper import LarkCli
+
+    cli = LarkCli(dry_run=args.preview)
+
+    generated = 0
+    upload_results = []
+
+    for comp in sorted(index.values(), key=lambda c: c["name"]):
+        name = comp["name"]
+        if args.component and name != args.component:
+            continue
+
+        # 生成 Markdown（复用现有逻辑）
+        markdown = generate_component_doc(comp, index, pods_dir, ai_results)
+
+        # 同时输出到本地
+        out_path = os.path.join(output_dir, f"{name}.md")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(markdown)
+
+        # 上传到飞书知识库
+        result = cli.create_wiki_doc(args.space_id, args.parent_node, name, markdown)
+        upload_results.append({
+            "name": name,
+            "node_token": result.get("node_token", ""),
+            "obj_token": result.get("obj_token", ""),
+        })
+        logger.info("  ✓ %s → %s (node=%s)", name, out_path, result.get("node_token", ""))
+        generated += 1
+
+    # 目录页
+    if not args.component:
+        index_doc = generate_index_page(index)
+        index_path = os.path.join(output_dir, "index.md")
+        with open(index_path, "w", encoding="utf-8") as f:
+            f.write(index_doc)
+
+        result = cli.create_wiki_doc(args.space_id, args.parent_node, "iOS 基础库 API 文档", index_doc)
+        logger.info("  ✓ 目录页 → %s (node=%s)", index_path, result.get("node_token", ""))
+
+    mode = "预览模式（未实际上传）" if args.preview else "已上传到飞书"
+    logger.info("\n完成！共处理 %d 个组件文档，%s", generated, mode)
 
     if upload_results:
         logger.info("\n上传结果：")
