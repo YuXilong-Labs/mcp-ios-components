@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import os
+import re as _re
 import sys
 from datetime import datetime
 
@@ -28,6 +29,35 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 logger = logging.getLogger(__name__)
+
+# 文件名中不允许出现的字符
+_UNSAFE_FILENAME_CHARS = _re.compile(r'[/\\:*?"<>|\n\r\t]')
+
+
+def _make_filename(name: str, summary: str, ext: str = ".md") -> str:
+    """生成 '组件名-简述.ext' 格式的文件名。
+
+    - 多行 summary 取首行
+    - 去除文件名非法字符
+    - 超过 20 字符截断
+    - summary 为空时退回 '{name}.ext'
+    """
+    if not summary:
+        return f"{name}{ext}"
+    # 取首行
+    short = summary.split("\n")[0].strip()
+    # 取第一句（句号、分号截断）
+    for sep in ("。", "；", ";", "."):
+        idx = short.find(sep)
+        if 0 < idx < len(short):
+            short = short[:idx]
+            break
+    short = _UNSAFE_FILENAME_CHARS.sub("", short).strip()
+    if len(short) > 20:
+        short = short[:20]
+    if not short:
+        return f"{name}{ext}"
+    return f"{name}-{short}{ext}"
 
 
 class IndexLoadError(RuntimeError):
@@ -345,7 +375,7 @@ def _render_api_entry(lines: list, api: dict, comp_name: str, ai_results: dict |
     lines.append(f"{heading} {kind_label} `{api_name}` {deprecated_tag}\n")
 
     lang = "swift" if file_path.endswith(".swift") else "objc"
-    lines.append(f"```{lang}\n{declaration}\n```\n")
+    lines.append(f"```{lang}\n{declaration.rstrip()}\n```\n")
 
     if comment:
         abstract, discussion = _split_abstract_discussion(comment)
@@ -378,7 +408,8 @@ def generate_index_page(components: dict) -> str:
         summary = comp.get("summary", "") or "—"
         api_count = len(comp.get("apis", []))
         source_count = comp.get("source_count", 0)
-        lines.append(f"| [{name}](./{name}.md) | {summary} | {api_count} | {source_count} |")
+        fname = _make_filename(name, summary if summary != "—" else "")
+        lines.append(f"| [{name}](./{fname}) | {summary} | {api_count} | {source_count} |")
 
     return "\n".join(lines)
 
@@ -599,7 +630,8 @@ def _generate_markdown(
             continue
 
         doc = generate_component_doc(comp, index, pods_dir, ai_results)
-        out_path = os.path.join(output_dir, f"{name}.md")
+        fname = _make_filename(name, comp.get("summary", ""))
+        out_path = os.path.join(output_dir, fname)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(doc)
         generated += 1
@@ -646,7 +678,8 @@ def _generate_lark(
             logger.info("  ✓ %s → 飞书文档 %s", name, doc_id)
         else:
             # 输出 JSON 到本地
-            out_path = os.path.join(output_dir, f"{name}.json")
+            fname = _make_filename(name, comp.get("summary", ""), ext=".json")
+            out_path = os.path.join(output_dir, fname)
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump({"component": name, "blocks": blocks}, f, ensure_ascii=False, indent=2)
             logger.info("  ✓ %s → %s", name, out_path)
@@ -696,7 +729,8 @@ def _upload_via_lark_cli(
         markdown = generate_component_doc(comp, index, pods_dir, ai_results)
 
         # 同时输出到本地
-        out_path = os.path.join(output_dir, f"{name}.md")
+        fname = _make_filename(name, comp.get("summary", ""))
+        out_path = os.path.join(output_dir, fname)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(markdown)
 

@@ -229,7 +229,15 @@ def extract_apis(file_path: str, rel_path: str) -> list:
                 i += 1
                 continue
 
-            # @property
+            # @property — block 类型: @property(...) returnType (^name)(params);
+            m = re.match(r"^@property\s*\([^)]*\)\s*\w[\w\s*]*\(\s*\^\s*(\w+)\s*\)", trimmed)
+            if m:
+                apis.append(_make_api("property", m.group(1), trimmed, i + 1, pending_comment))
+                pending_comment = ""
+                i += 1
+                continue
+
+            # @property — 普通类型
             m = re.match(r"^@property\s*\(([^)]*)\)\s*\S+\s*\*?\s*(\w+)", trimmed)
             if m:
                 apis.append(_make_api("property", m.group(2), trimmed, i + 1, pending_comment))

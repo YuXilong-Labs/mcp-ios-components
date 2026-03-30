@@ -9,7 +9,7 @@ iOS CocoaPods 组件库 MCP Server，帮助 AI 编码助手发现和复用已有
 ## 特性
 
 - **自动组件发现** — 扫描 podspec 文件，可配置过滤标记
-- **智能 API 提取** — ObjC（`@interface`、`@protocol`、`@property`、方法、内联函数）+ Swift（`public/open` 声明）
+- **智能 API 提取** — ObjC（`@interface`、`@protocol`、`@property`（含 block 类型）、方法、内联函数）+ Swift（`public/open` 声明）
 - **注释提取** — 支持 `///` 和 `/** */` 文档注释，可搜索
 - **跨组件使用搜索** — 查找组件在其他组件中的 import 和使用方式
 - **SHA256 缓存** — 源文件变更时自动重建索引
@@ -351,11 +351,13 @@ python tools/generate_api_docs.py --pods-dir /path/to/Pods --output-dir ./my-doc
 生成的文档结构：
 ```text
 docs/api/
-├── index.md          # 目录页（组件列表 + 链接）
-├── BTBaseKit.md      # 组件 API 文档
-├── BTNetwork.md
+├── index.md                       # 目录页（组件列表 + 链接）
+├── BTBaseKit-底层基类、工具类.md    # 组件 API 文档（组件名-简述）
+├── BTNetwork-网络请求封装.md
 └── ...
 ```
+
+文件名格式为 `组件名-简述.md`，简述取自 podspec summary 首行，超过 20 字符自动截断；无 summary 时退回 `组件名.md`。
 
 每个组件文档包含：
 - 组件概述（来自 podspec summary/description）
@@ -432,7 +434,7 @@ MCP Server for querying iOS CocoaPods component APIs. Helps AI coding assistants
 ## Features
 
 - **Auto component discovery** — scans podspec files, filters by configurable marker
-- **Smart API extraction** — ObjC (`@interface`, `@protocol`, `@property`, methods, inline functions) + Swift (`public/open` declarations)
+- **Smart API extraction** — ObjC (`@interface`, `@protocol`, `@property` (including block types), methods, inline functions) + Swift (`public/open` declarations)
 - **Comment extraction** — `///` and `/** */` doc comments, searchable
 - **Cross-component usage search** — find how components are imported/used elsewhere
 - **SHA256 cache** — auto-rebuilds index only when source files change
