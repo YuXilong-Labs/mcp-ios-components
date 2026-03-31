@@ -68,8 +68,7 @@ def load_index(cache_path: str) -> dict:
     """加载索引缓存。"""
     if not os.path.exists(cache_path):
         raise IndexLoadError(
-            f"索引缓存不存在: {cache_path}\n"
-            "请先运行 MCP Server 构建索引（python mcp_server.py /path/to/pods）"
+            f"索引缓存不存在: {cache_path}\n请先运行 MCP Server 构建索引（python mcp_server.py /path/to/pods）"
         )
 
     with open(cache_path, encoding="utf-8") as f:
@@ -135,10 +134,12 @@ def find_usage_examples(
                         break
 
             if relevant:
-                results.append({
-                    "source": f"{other_name}/{rel}",
-                    "lines": relevant,
-                })
+                results.append(
+                    {
+                        "source": f"{other_name}/{rel}",
+                        "lines": relevant,
+                    }
+                )
 
     return results
 
@@ -165,13 +166,23 @@ def generate_component_doc(
     api_count = len(apis)
     source_count = comp.get("source_count", 0)
     lines.append(f"\n**API 数量：** {api_count} | **源文件数：** {source_count}")
-    lines.append("\n---\n")
 
     if not apis:
+        lines.append("\n---\n")
         lines.append("*该组件未发现公开 API 声明。*")
     else:
         # 按类/协议聚合
         class_groups, enums, typedefs, standalone = _group_apis_by_class(apis)
+
+        # 主要类/协议导航
+        if class_groups:
+            class_names = sorted(class_groups.keys())
+            nav = " · ".join(f"`{cn}`" for cn in class_names[:10])
+            if len(class_names) > 10:
+                nav += f" … 共 {len(class_names)} 个"
+            lines.append(f"\n**主要类/协议：** {nav}")
+
+        lines.append("\n---\n")
 
         # 类/协议章节
         for class_name in sorted(class_groups.keys()):
@@ -279,6 +290,67 @@ def _group_apis_by_class(apis: list) -> tuple[dict, list, list, list]:
     return class_groups, enums, typedefs, standalone
 
 
+# ObjC property 类型提取正则：@property(attrs) Type *name; 或 @property(attrs) Type name;
+_OBJC_PROP_TYPE_RE = _re.compile(
+    r"@property\s*\([^)]*\)\s+"  # @property(...)
+    r"((?:nullable|nonnull|__nullable|__nonnull|__kindof)\s+)?"  # 可选 nullability
+    r"(.+?)\s*"  # 类型
+    r"(?:\*\s*)?"  # 可选指针
+    r"(\w+)\s*;",  # 属性名
+)
+# ObjC Block 属性：@property(attrs) void (^name)(params);
+_OBJC_BLOCK_PROP_RE = _re.compile(
+    r"@property\s*\([^)]*\)\s+"  # @property(...)
+    r"(\S+)\s*"  # 返回类型
+    r"\(\^(\w+)\)"  # (^name)
+)
+# Swift var/let 类型提取：var name: Type
+_SWIFT_VAR_TYPE_RE = _re.compile(r"(?:var|let)\s+\w+\s*:\s*(.+?)(?:\s*[={]|$)")
+
+
+def _extract_property_type(declaration: str) -> str:
+    """从属性声明中提取类型名。"""
+    declaration = declaration.strip()
+    # ObjC Block 属性
+    m = _OBJC_BLOCK_PROP_RE.search(declaration)
+    if m:
+        return "Block"
+    # ObjC 普通属性
+    m = _OBJC_PROP_TYPE_RE.search(declaration)
+    if m:
+        type_str = m.group(2).strip()
+        # 如果类型含指针符号在末尾被截断，补回
+        if "*" in declaration and not type_str.endswith("*"):
+            type_str += " *"
+        return type_str
+    # Swift
+    m = _SWIFT_VAR_TYPE_RE.search(declaration)
+    if m:
+        return m.group(1).strip()
+    # Block typedef 属性等复杂情况，返回简略
+    return "—"
+
+
+def _first_line_comment(comment: str) -> str:
+    """提取注释的第一行作为简要说明。"""
+    if not comment:
+        return "—"
+    abstract, _ = _split_abstract_discussion(comment)
+    return abstract if abstract else "—"
+
+
+# 枚举值提取：EnumName = 0 或 EnumName = (1 << 2)
+_ENUM_VALUE_RE = _re.compile(r"=\s*(.+?)(?:,|\s*$)")
+
+
+def _extract_enum_value(declaration: str) -> str:
+    """从枚举成员声明中提取赋值。"""
+    m = _ENUM_VALUE_RE.search(declaration.strip())
+    if m:
+        return m.group(1).strip()
+    return "—"
+
+
 def _render_class_section(lines: list, class_name: str, group: dict, comp_name: str, ai_results: dict | None):
     """渲染单个类/协议的文档章节。"""
     definition = group.get("definition")
@@ -289,7 +361,9 @@ def _render_class_section(lines: list, class_name: str, group: dict, comp_name: 
     if definition:
         kind_label = _kind_label(definition.get("kind", "interface"))
         deprecated_tag = _deprecated_tag(definition)
-        lines.append(f"## {kind_label} `{class_name}` {deprecated_tag}\n")
+        lines.append(f"## {kind_label} `{class_name}`\n")
+        if deprecated_tag:
+            lines.append(f"> {deprecated_tag}\n")
 
         # 声明
         file_path = definition.get("file", "")
@@ -314,6 +388,16 @@ def _render_class_section(lines: list, class_name: str, group: dict, comp_name: 
 
         if props:
             lines.append("### 属性\n")
+            # 概览表格
+            if len(props) >= 2:
+                lines.append("| 属性 | 类型 | 说明 |")
+                lines.append("|------|------|------|")
+                for p in props:
+                    pname = p.get("name", "")
+                    ptype = _extract_property_type(p.get("declaration", ""))
+                    abstract = _first_line_comment(p.get("comment", ""))
+                    lines.append(f"| `{pname}` | `{ptype}` | {abstract} |")
+                lines.append("")
             for p in props:
                 _render_api_entry(lines, p, comp_name, ai_results, heading_level=4)
 
@@ -340,7 +424,9 @@ def _render_enum_section(lines: list, enum_info: dict):
     members = enum_info["members"]
     deprecated_tag = _deprecated_tag(definition)
 
-    lines.append(f"### 📦 枚举 `{definition['name']}` {deprecated_tag}\n")
+    lines.append(f"### 📦 枚举 `{definition['name']}`\n")
+    if deprecated_tag:
+        lines.append(f"> {deprecated_tag}\n")
     lines.append(f"```objc\n{definition['declaration']}\n```\n")
 
     comment = (definition.get("comment") or "").strip()
@@ -351,11 +437,12 @@ def _render_enum_section(lines: list, enum_info: dict):
             lines.append(f"{discussion}\n")
 
     if members:
-        lines.append("| 成员 | 说明 |")
-        lines.append("|------|------|")
+        lines.append("| 成员 | 值 | 说明 |")
+        lines.append("|------|----|------|")
         for m in members:
             mc = _clean_comment(m.get("comment", "")).split("\n")[0] if m.get("comment") else "—"
-            lines.append(f"| `{m['name']}` | {mc} |")
+            val = _extract_enum_value(m.get("declaration", ""))
+            lines.append(f"| `{m['name']}` | {val} | {mc} |")
         lines.append("")
 
     lines.append("---\n")
@@ -372,7 +459,11 @@ def _render_api_entry(lines: list, api: dict, comp_name: str, ai_results: dict |
     kind_label = _kind_label(kind)
     deprecated_tag = _deprecated_tag(api)
     heading = "#" * heading_level
-    lines.append(f"{heading} {kind_label} `{api_name}` {deprecated_tag}\n")
+    lines.append(f"{heading} {kind_label} `{api_name}`\n")
+
+    # 废弃标注独立为 blockquote，更醒目
+    if deprecated_tag:
+        lines.append(f"> {deprecated_tag}\n")
 
     lang = "swift" if file_path.endswith(".swift") else "objc"
     lines.append(f"```{lang}\n{declaration.rstrip()}\n```\n")
@@ -395,21 +486,31 @@ def _render_api_entry(lines: list, api: dict, comp_name: str, ai_results: dict |
 
 def generate_index_page(components: dict) -> str:
     """生成组件目录页。"""
+    # 统计总 API 数
+    total_apis = sum(len(c.get("apis", [])) for c in components.values())
+
     lines = [
         "# iOS 基础库 API 文档\n",
-        f"> 自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}，共 {len(components)} 个组件\n",
+        f"> 自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}，共 {len(components)} 个组件，{total_apis} 个 API\n",
         "## 组件列表\n",
-        "| 组件名 | 描述 | API 数量 | 源文件数 |",
-        "|--------|------|----------|----------|",
+        "| # | 组件名 | 描述 | API 数量 | 源文件数 |",
+        "|---|--------|------|----------|----------|",
     ]
 
-    for comp in sorted(components.values(), key=lambda c: c["name"]):
+    # 按 API 数量降序排列
+    sorted_comps = sorted(
+        components.values(),
+        key=lambda c: len(c.get("apis", [])),
+        reverse=True,
+    )
+
+    for idx, comp in enumerate(sorted_comps, 1):
         name = comp["name"]
         summary = comp.get("summary", "") or "—"
         api_count = len(comp.get("apis", []))
         source_count = comp.get("source_count", 0)
         fname = _make_filename(name, summary if summary != "—" else "")
-        lines.append(f"| [{name}](./{fname}) | {summary} | {api_count} | {source_count} |")
+        lines.append(f"| {idx} | [{name}](./{fname}) | {summary} | {api_count} | {source_count} |")
 
     return "\n".join(lines)
 
@@ -419,7 +520,7 @@ def _deprecated_tag(api: dict) -> str:
     dep = api.get("deprecated")
     if not dep:
         return ""
-    parts = ["⚠️ 已废弃"]
+    parts = ["⚠️ **已废弃**"]
     if dep.get("since") and dep.get("until"):
         parts.append(f"(iOS {dep['since']}–{dep['until']})")
     if dep.get("message"):
@@ -447,6 +548,9 @@ def _split_abstract_discussion(comment: str) -> tuple[str, str]:
             continue
         elif line.startswith("*"):
             line = line[1:].strip()
+        # 清理行末 */
+        if line.endswith("*/"):
+            line = line[:-2].strip()
         cleaned.append(line)
 
     text = "\n".join(cleaned).strip()
@@ -485,7 +589,7 @@ def _clean_comment(comment: str) -> str:
     """清理注释中的 /// 和 /** */ 标记，并将 @param/@return 转换为 Markdown 格式。"""
     raw_lines = comment.split("\n")
     cleaned = []
-    params = []
+    params: list[tuple[str, str]] = []  # (name, desc)
     return_desc = ""
 
     for line in raw_lines:
@@ -504,9 +608,9 @@ def _clean_comment(comment: str) -> str:
             rest = line[7:].strip()
             parts = rest.split(None, 1)
             if len(parts) == 2:
-                params.append(f"- `{parts[0]}` — {parts[1]}")
+                params.append((parts[0], parts[1]))
             elif parts:
-                params.append(f"- `{parts[0]}`")
+                params.append((parts[0], ""))
         elif line.startswith("@return ") or line.startswith("@returns "):
             parts = line.split(None, 1)
             return_desc = parts[1] if len(parts) > 1 else ""
@@ -515,7 +619,13 @@ def _clean_comment(comment: str) -> str:
 
     result = "\n".join(cleaned).strip()
     if params:
-        result += "\n\n**参数：**\n" + "\n".join(params)
+        if len(params) >= 3:
+            # 表格展示
+            result += "\n\n**参数：**\n\n| 参数 | 说明 |\n|------|------|\n"
+            result += "\n".join(f"| `{name}` | {desc} |" for name, desc in params)
+        else:
+            # 列表展示
+            result += "\n\n**参数：**\n" + "\n".join(f"- `{name}` — {desc}" for name, desc in params)
     if return_desc:
         result += f"\n\n**返回值：** {return_desc}"
     return result
@@ -535,33 +645,22 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="仅统计缺注释数量，不生成文档")
     parser.add_argument("--component", default="", help="指定单个组件名（可选）")
     parser.add_argument(
-        "--format", default="markdown", choices=["markdown", "lark"],
+        "--format",
+        default="markdown",
+        choices=["markdown", "lark"],
         help="输出格式：markdown（默认）或 lark（飞书 DocX Block JSON）",
     )
-    parser.add_argument("--upload", action="store_true", help="上传到飞书知识库（需配合 --space-id，依赖 lark-cli）")
+    parser.add_argument("--upload", action="store_true", help="上传到飞书知识库（需配合 --wiki-node，依赖 lark-cli）")
     parser.add_argument("--preview", action="store_true", help="预览上传内容，不实际执行（映射 lark-cli --dry-run）")
-    parser.add_argument("--space-id", default="", help="飞书知识库 space_id")
-    parser.add_argument("--parent-node", default="", help="飞书知识库父节点 token（wikcnXxx 格式，留空则创建在知识库根目录）")
+    parser.add_argument("--wiki-node", default="", help="飞书知识库节点 token（如 EYTFwhr2kiYzJYkXGVLlLwpsgAh）")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
 
     # 参数校验
-    if args.upload and not args.space_id:
-        print("错误：使用 --upload 时必须指定 --space-id", file=sys.stderr)
+    if args.upload and not args.wiki_node:
+        print("错误：使用 --upload 时必须指定 --wiki-node", file=sys.stderr)
         sys.exit(1)
-    # parent-node 格式校验（应为 node_token，非中文名称）
-    if args.parent_node and not args.parent_node.startswith("wikcn"):
-        print(
-            f"警告：--parent-node '{args.parent_node}' 看起来不是有效的 node_token。\n"
-            "  node_token 格式通常为 wikcnXxx...，可在飞书知识库 URL 中找到。\n"
-            "  如需创建在知识库根目录，请省略 --parent-node 参数。",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if args.upload and args.format != "lark":
-        # --upload 时本地输出仍走 lark 格式（如需要），但上传走 markdown 路径
-        pass  # 不再强制 format=lark，上传通过 lark-cli 直接使用 markdown
 
     # 确定索引缓存路径
     cache_path = args.index_cache
@@ -585,9 +684,7 @@ def main():
             print("错误：使用 --ai-fill 时必须指定 --pods-dir", file=sys.stderr)
             sys.exit(1)
 
-        result = fill_missing_comments(
-            index, args.pods_dir or "", component_name=args.component, dry_run=args.dry_run
-        )
+        result = fill_missing_comments(index, args.pods_dir or "", component_name=args.component, dry_run=args.dry_run)
 
         if args.dry_run:
             print("\n=== AI 补全预估 ===")
@@ -620,7 +717,11 @@ def main():
 
 
 def _generate_markdown(
-    index: dict, pods_dir: str, output_dir: str, ai_results: dict | None, args: argparse.Namespace,
+    index: dict,
+    pods_dir: str,
+    output_dir: str,
+    ai_results: dict | None,
+    args: argparse.Namespace,
 ) -> None:
     """Markdown 格式生成（原有逻辑）。"""
     generated = 0
@@ -648,7 +749,11 @@ def _generate_markdown(
 
 
 def _generate_lark(
-    index: dict, pods_dir: str, output_dir: str, ai_results: dict | None, args: argparse.Namespace,
+    index: dict,
+    pods_dir: str,
+    output_dir: str,
+    ai_results: dict | None,
+    args: argparse.Namespace,
 ) -> None:
     """飞书 DocX 格式生成（+ 可选上传）。"""
     from tools.lark_doc_formatter import convert_component_to_blocks, convert_index_to_blocks
@@ -657,6 +762,7 @@ def _generate_lark(
     lark_client = None
     if args.upload:
         from mcp_app.integrations.lark_client import LarkClient
+
         lark_client = LarkClient()
 
     generated = 0
@@ -710,7 +816,11 @@ def _generate_lark(
 
 
 def _upload_via_lark_cli(
-    index: dict, pods_dir: str, output_dir: str, ai_results: dict | None, args: argparse.Namespace,
+    index: dict,
+    pods_dir: str,
+    output_dir: str,
+    ai_results: dict | None,
+    args: argparse.Namespace,
 ) -> None:
     """通过 lark-cli 上传 Markdown 文档到飞书知识库。"""
     from tools.lark_cli_wrapper import LarkCli
@@ -735,13 +845,15 @@ def _upload_via_lark_cli(
             f.write(markdown)
 
         # 上传到飞书知识库
-        result = cli.create_wiki_doc(args.space_id, args.parent_node, name, markdown)
-        upload_results.append({
-            "name": name,
-            "node_token": result.get("node_token", ""),
-            "obj_token": result.get("obj_token", ""),
-        })
-        logger.info("  ✓ %s → %s (node=%s)", name, out_path, result.get("node_token", ""))
+        result = cli.create_wiki_doc(args.wiki_node, name, markdown)
+        upload_results.append(
+            {
+                "name": name,
+                "doc_id": result.get("doc_id", ""),
+                "doc_url": result.get("doc_url", ""),
+            }
+        )
+        logger.info("  ✓ %s → %s (doc=%s)", name, out_path, result.get("doc_id", ""))
         generated += 1
 
     # 目录页
@@ -751,8 +863,8 @@ def _upload_via_lark_cli(
         with open(index_path, "w", encoding="utf-8") as f:
             f.write(index_doc)
 
-        result = cli.create_wiki_doc(args.space_id, args.parent_node, "iOS 基础库 API 文档", index_doc)
-        logger.info("  ✓ 目录页 → %s (node=%s)", index_path, result.get("node_token", ""))
+        result = cli.create_wiki_doc(args.wiki_node, "iOS 基础库 API 文档", index_doc)
+        logger.info("  ✓ 目录页 → %s (doc=%s)", index_path, result.get("doc_id", ""))
 
     mode = "预览模式（未实际上传）" if args.preview else "已上传到飞书"
     logger.info("\n完成！共处理 %d 个组件文档，%s", generated, mode)
@@ -760,7 +872,7 @@ def _upload_via_lark_cli(
     if upload_results:
         logger.info("\n上传结果：")
         for r in upload_results:
-            logger.info("  %s: node=%s, doc=%s", r["name"], r["node_token"], r["obj_token"])
+            logger.info("  %s: doc=%s, url=%s", r["name"], r["doc_id"], r["doc_url"])
 
 
 if __name__ == "__main__":
