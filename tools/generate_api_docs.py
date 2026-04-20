@@ -640,13 +640,19 @@ def _indent_blockquote(text: str) -> str:
 # 批量上传（发现 + 分支过滤 + pull + 生成 + 上传）
 # ============================================================
 
-from mcp_app.integrations.git_client import get_git_repo_branch  # noqa: E402
+from mcp_app.integrations.git_client import get_git_repo_branch, git_pull_repo  # noqa: E402
 
 
 def _bootstrap_module():
     from mcp_app import bootstrap
 
     return bootstrap
+
+
+def _get_lark_cli(dry_run: bool):
+    from tools.lark_cli_wrapper import LarkCli
+
+    return LarkCli(dry_run=dry_run)
 
 
 def _discover_base_components(pods_dir: str) -> list[str]:
@@ -668,8 +674,54 @@ def _process_single_component(
 
     返回 {"status": "ok"|"failed", "component": ..., ...}。
     """
-    # 阶段 2 将填充真实逻辑，此处先占位以便先跑通骨架测试。
-    return {"status": "ok", "component": component}
+    from tools.lark_cli_wrapper import LarkCliError
+
+    pull_result = git_pull_repo(comp_path)
+    if pull_result.get("error"):
+        return {
+            "status": "failed",
+            "component": component,
+            "reason": f"pull failed: {pull_result['error']}",
+        }
+
+    comp = index.get(component)
+    if comp is None:
+        return {
+            "status": "failed",
+            "component": component,
+            "reason": "component not found in index after build",
+        }
+
+    ai_results: dict | None = None
+    if polish:
+        try:
+            from tools.ai_doc_filler import fill_missing_comments
+
+            fill_result = fill_missing_comments(index, pods_dir, component_name=component)
+            ai_results = fill_result.get("results") if isinstance(fill_result, dict) else None
+        except Exception as e:  # noqa: BLE001
+            logger.warning("润色失败，回退为原始文档：%s", e)
+            ai_results = None
+
+    markdown = generate_component_doc(comp, index, pods_dir, ai_results)
+
+    cli = _get_lark_cli(dry_run)
+    try:
+        resp = cli.create_wiki_doc(wiki_node, component, markdown)
+    except LarkCliError as e:
+        return {
+            "status": "failed",
+            "component": component,
+            "reason": f"upload failed: {e}",
+        }
+
+    return {
+        "status": "ok",
+        "component": component,
+        "pull_changes": pull_result.get("changes", []),
+        "doc_id": resp.get("doc_id"),
+        "doc_url": resp.get("doc_url"),
+    }
 
 
 def _run_batch_upload(

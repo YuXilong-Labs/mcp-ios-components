@@ -68,3 +68,86 @@ def test_batch_build_index_failure_records_all_main_components(fake_pods):
     failed_names = [item["component"] for item in summary["failed"]]
     assert failed_names == ["CompA", "CompC"]
     assert all("build_index failed" in item["reason"] for item in summary["failed"])
+
+
+def test_process_single_component_pull_generate_upload(fake_pods):
+    fake_index = {"CompA": {"name": "CompA", "dir": "CompA", "apis": [], "files": []}}
+    pull_mock = patch.object(gad, "git_pull_repo", return_value={"updated": True, "changes": ["a.h"], "error": None})
+    gen_mock = patch.object(gad, "generate_component_doc", return_value="# CompA\n")
+    lark_instance = SimpleNamespace(create_wiki_doc=lambda node, title, md: {"doc_id": "docX", "doc_url": "http://u"})
+
+    with pull_mock as pull, gen_mock as gen, patch.object(gad, "_get_lark_cli", return_value=lark_instance):
+        result = gad._process_single_component(
+            component="CompA",
+            comp_path=fake_pods + "/CompA",
+            index=fake_index,
+            pods_dir=fake_pods,
+            wiki_node="wiki_Y",
+            polish=False,
+            dry_run=False,
+        )
+
+    pull.assert_called_once_with(fake_pods + "/CompA")
+    gen.assert_called_once()
+    assert result == {
+        "status": "ok",
+        "component": "CompA",
+        "pull_changes": ["a.h"],
+        "doc_id": "docX",
+        "doc_url": "http://u",
+    }
+
+
+def test_process_single_component_pull_failure_returns_failed(fake_pods):
+    fake_index = {"CompA": {"name": "CompA", "dir": "CompA", "apis": [], "files": []}}
+
+    with (
+        patch.object(gad, "git_pull_repo", return_value={"updated": False, "changes": [], "error": "auth denied"}),
+        patch.object(gad, "generate_component_doc") as gen,
+        patch.object(gad, "_get_lark_cli") as cli_factory,
+    ):
+        result = gad._process_single_component(
+            component="CompA",
+            comp_path=fake_pods + "/CompA",
+            index=fake_index,
+            pods_dir=fake_pods,
+            wiki_node="w",
+            polish=False,
+            dry_run=False,
+        )
+
+    gen.assert_not_called()
+    cli_factory.assert_not_called()
+    assert result["status"] == "failed"
+    assert result["component"] == "CompA"
+    assert "pull failed" in result["reason"]
+
+
+def test_process_single_component_upload_failure_isolated(fake_pods):
+    from tools.lark_cli_wrapper import LarkCliError
+
+    fake_index = {"CompA": {"name": "CompA", "dir": "CompA", "apis": [], "files": []}}
+
+    def boom(*_args, **_kwargs):
+        raise LarkCliError("lark cli crashed")
+
+    lark_instance = SimpleNamespace(create_wiki_doc=boom)
+
+    with (
+        patch.object(gad, "git_pull_repo", return_value={"updated": False, "changes": [], "error": None}),
+        patch.object(gad, "generate_component_doc", return_value="# A"),
+        patch.object(gad, "_get_lark_cli", return_value=lark_instance),
+    ):
+        result = gad._process_single_component(
+            component="CompA",
+            comp_path=fake_pods + "/CompA",
+            index=fake_index,
+            pods_dir=fake_pods,
+            wiki_node="w",
+            polish=False,
+            dry_run=False,
+        )
+
+    assert result["status"] == "failed"
+    assert "upload failed" in result["reason"]
+    assert "lark cli crashed" in result["reason"]
