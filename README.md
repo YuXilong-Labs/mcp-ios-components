@@ -157,10 +157,18 @@ python3 scripts/install_skills.py --target claude --claude-dir ~/.claude/skills
 
 支持根据配置文件自动拉取组件代码：
 
+- 默认行为：正常启动 `python mcp_server.py /path/to/pods` 时会先自动同步，再构建首次索引。
+- 优先级：如果项目根目录存在 `components.yaml`，优先按配置同步基础组件；若配置不存在，则回退为同步 `pods_dir` 下扫描到的、当前位于 `main` 分支的基础 git 仓库。
+- 同步分支：优先使用 `components.yaml` 中每个组件的 `branch`；未配置时默认 `main`。
+- 降级策略：若启动前同步存在错误，服务不会退出，而是记录告警并继续使用本地已有代码建索引。
+
 ```bash
 # 创建配置文件
 cp components.yaml.example components.yaml
 # 编辑配置...
+
+# 普通启动会自动先同步再扫描
+python mcp_server.py /path/to/pods
 
 # 同步组件（克隆/更新）
 python mcp_server.py --sync components.yaml /path/to/pods
@@ -188,7 +196,11 @@ access_control:
     - BTEncryptKit
 ```
 
-也可以通过 MCP 工具 `sync_from_config` 在运行时触发同步。
+说明：
+- `--sync` 仍保留显式同步入口，适合希望在启动前手动控制配置路径或只执行同步的场景。
+- 显式传入 `--sync` 或 `--gitlab-group` 时，不会再额外执行一次隐式启动前同步。
+- 如果既没有 `components.yaml`，也没有扫描到可同步的 `main` 分支基础 git 仓库，则会直接进入索引构建。
+- 也可以通过 MCP 工具 `sync_from_config` 在运行时触发同步。
 
 ## 访问控制配置（核心组件保护）
 
@@ -413,6 +425,80 @@ python tools/generate_api_docs.py \
 | `--parent-node` | 父节点 token（wikcnXxx 格式） | 无 |
 | `--format lark` | 输出飞书 DocX Block JSON（仅本地输出） | `markdown` |
 
+### 批量生成 + 上传基础组件（main 分支）
+
+一次性把指定 `--pods-dir` 下所有**基础组件**（发现规则与 MCP 启动一致，过滤掉 `SUPPORT_MIXUP` 非空的业务组件）生成 API Markdown 并上传到同一飞书 wiki 节点。
+
+```bash
+# 默认不润色
+python tools/generate_api_docs.py \
+  --batch-upload \
+  --pods-dir /path/to/Pods \
+  --wiki-node wikcnXXX
+
+# 上传前执行 AI 深度润色
+python tools/generate_api_docs.py \
+  --batch-upload --polish \
+  --pods-dir /path/to/Pods \
+  --wiki-node wikcnXXX
+
+# 预览（不实际调用 lark-cli）
+python tools/generate_api_docs.py \
+  --batch-upload --preview \
+  --pods-dir /path/to/Pods \
+  --wiki-node wikcnXXX
+```
+
+行为要点：
+
+- 仅处理当前本地分支为 `main` 的组件；非 main 分支的组件记入"跳过"清单，不生成也不上传。
+- 处理前对 main 分支组件执行 `git pull --ff-only`，拉取远端最新代码；pull 失败则标记该组件为失败，不中断整批。
+- 单组件上传失败（lark-cli 报错等）不会中断整批；末尾打印 `成功 / 跳过 / 失败` 三类汇总。
+- 退出码：全部成功 → 0；存在 `failed` → 1；缺 `--pods-dir` 或 `--wiki-node` → 2。
+
+批量模式参数：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--batch-upload` | 启用批量模式 | 关闭 |
+| `--pods-dir` | Pods 根目录（必填） | 无 |
+| `--wiki-node` | 飞书知识库目标节点 token（必填，所有组件均挂该节点下） | 无 |
+| `--polish` | 启用 AI 深度润色（可选） | 关闭 |
+| `--preview` | 预览，不实际调用 lark-cli | 关闭 |
+
+### 通用 Markdown 上传工具
+
+独立脚本，将任意 Markdown 文件或整个目录上传到飞书文档（不依赖索引）：
+
+```bash
+# 上传单个文件
+python tools/upload_to_lark.py docs/api/BTBaseKit.md
+
+# 上传并指定标题
+python tools/upload_to_lark.py docs/api/BTBaseKit.md --title "BTBaseKit API 文档"
+
+# 上传到知识库节点下
+python tools/upload_to_lark.py docs/api/BTBaseKit.md --wiki-node wikcnXXXX
+
+# 上传整个目录
+python tools/upload_to_lark.py docs/api/
+
+# 预览模式（不实际上传）
+python tools/upload_to_lark.py docs/api/ --dry-run
+```
+
+上传参数：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `path` | Markdown 文件或目录（位置参数，自动识别） | 必填 |
+| `--title` | 文档标题（仅单文件生效，默认从内容提取） | 自动 |
+| `--wiki-node` | 知识库节点 token（wikcnXxx 格式） | 无 |
+| `--wiki-space` | 知识空间 ID | 无 |
+| `--folder-token` | 云空间文件夹 token | 无 |
+| `--chunk-lines` | 分段上传行数 | 400 |
+| `--dry-run` | 预览模式，不实际上传 | 关闭 |
+
 ## 缓存机制
 
 索引缓存在 `.cache/index.json`，基于文件路径和修改时间的 SHA256 哈希。源文件变更时自动重建。
@@ -514,6 +600,27 @@ Edit `AGENTS.md` to fill in your project-specific component table. Claude Code w
 | `watch_status` | View watch status and recent update logs |
 | `sync_from_config(config_path?)` | Sync components from config file |
 | `sync_gitlab_group(group_id, ...)` | 🆕 Auto-discover and sync base components from GitLab Group |
+
+## Sync Components From Config
+
+On a normal startup like `python mcp_server.py /path/to/pods`, the server will auto-sync before building the first index.
+
+- If `components.yaml` exists under the project root, it syncs configured component repos first.
+- If no config file exists, it falls back to syncing base-component git repositories discovered under `pods_dir` that are currently on the `main` branch.
+- Branch selection respects each component's configured `branch`; if omitted, it defaults to `main`.
+- Startup sync failures are non-fatal: the server logs a warning and continues indexing the locally available code.
+- Explicit `--sync` and `--gitlab-group` flows still work as before and do not trigger an extra implicit startup sync.
+
+```bash
+# Normal startup auto-syncs first
+python mcp_server.py /path/to/pods
+
+# Explicit sync still works
+python mcp_server.py --sync components.yaml /path/to/pods
+
+# Sync only, do not start the server
+python mcp_server.py --sync --sync-only /path/to/pods
+```
 
 ## Access Control (Protect Sensitive Components)
 
