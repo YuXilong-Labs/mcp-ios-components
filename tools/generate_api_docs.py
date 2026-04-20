@@ -782,7 +782,30 @@ def _run_batch_upload(
     return summary
 
 
-def main():
+def _print_batch_summary(summary: dict) -> None:
+    """将批量上传结果打印到 stdout。"""
+    ok = summary.get("ok", [])
+    skipped = summary.get("skipped", [])
+    failed = summary.get("failed", [])
+    print("\n===== 批量上传汇总 =====")
+    print(f"成功 {len(ok)}  跳过 {len(skipped)}  失败 {len(failed)}")
+
+    if ok:
+        print("\n[成功]")
+        for item in ok:
+            url = item.get("doc_url") or "(dry-run)"
+            print(f"  - {item['component']}  →  {url}")
+    if skipped:
+        print("\n[跳过（非 main 分支）]")
+        for item in skipped:
+            print(f"  - {item['component']}  原因: {item['reason']}")
+    if failed:
+        print("\n[失败]")
+        for item in failed:
+            print(f"  - {item['component']}  原因: {item['reason']}")
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="iOS 基础库 API 文档自动生成")
     parser.add_argument("--index-cache", default="", help="索引缓存 JSON 路径（默认自动检测）")
     parser.add_argument("--pods-dir", default="", help="Pods 源码目录")
@@ -799,14 +822,41 @@ def main():
     parser.add_argument("--upload", action="store_true", help="上传到飞书知识库（需配合 --wiki-node，依赖 lark-cli）")
     parser.add_argument("--preview", action="store_true", help="预览上传内容，不实际执行（映射 lark-cli --dry-run）")
     parser.add_argument("--wiki-node", default="", help="飞书知识库节点 token（如 EYTFwhr2kiYzJYkXGVLlLwpsgAh）")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--batch-upload",
+        action="store_true",
+        help="批量模式：发现基础组件→main 分支 pull→生成→上传飞书 wiki，需配合 --pods-dir 与 --wiki-node",
+    )
+    parser.add_argument(
+        "--polish",
+        action="store_true",
+        help="--batch-upload 模式下对生成文档执行 AI 润色（默认关闭）",
+    )
+    args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
+
+    # 批量上传模式：独立早期分派，不走既有 load_index 路径（自己按需 build_index）。
+    if args.batch_upload:
+        if not args.pods_dir:
+            print("错误：--batch-upload 需要 --pods-dir", file=sys.stderr)
+            return 2
+        if not args.wiki_node:
+            print("错误：--batch-upload 需要 --wiki-node", file=sys.stderr)
+            return 2
+        summary = _run_batch_upload(
+            pods_dir=args.pods_dir,
+            wiki_node=args.wiki_node,
+            polish=args.polish,
+            dry_run=args.preview,
+        )
+        _print_batch_summary(summary)
+        return 0 if not summary.get("failed") else 1
 
     # 参数校验
     if args.upload and not args.wiki_node:
         print("错误：使用 --upload 时必须指定 --wiki-node", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     # 确定索引缓存路径
     cache_path = args.index_cache
@@ -818,7 +868,7 @@ def main():
         index = load_index(cache_path)
     except IndexLoadError as e:
         print(f"错误：{e}", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     # AI 补全
     ai_results = None
@@ -828,7 +878,7 @@ def main():
         # --ai-fill 需要 pods-dir，--dry-run 不需要
         if args.ai_fill and not args.pods_dir:
             print("错误：使用 --ai-fill 时必须指定 --pods-dir", file=sys.stderr)
-            sys.exit(1)
+            return 1
 
         result = fill_missing_comments(index, args.pods_dir or "", component_name=args.component, dry_run=args.dry_run)
 
@@ -838,7 +888,7 @@ def main():
             print("\n按组件分布:")
             for name, count in sorted(result["by_component"].items()):
                 print(f"  {name}: {count}")
-            return
+            return 0
 
         ai_results = result.get("results", {})
         if ai_results:
@@ -860,6 +910,8 @@ def main():
         _generate_lark(index, pods_dir, output_dir, ai_results, args)
     else:
         _generate_markdown(index, pods_dir, output_dir, ai_results, args)
+
+    return 0
 
 
 def _generate_markdown(
@@ -1022,4 +1074,4 @@ def _upload_via_lark_cli(
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
