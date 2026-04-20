@@ -207,17 +207,6 @@ def generate_component_doc(
             for api in standalone:
                 _render_api_entry(lines, api, name, ai_results)
 
-    # 调用示例
-    examples = find_usage_examples(index, name, pods_dir)
-    if examples:
-        lines.append("\n## 调用示例\n")
-        for ex in examples:
-            lines.append(f"### 来自 `{ex['source']}`\n")
-            lines.append("```")
-            for line in ex["lines"]:
-                lines.append(line)
-            lines.append("```\n")
-
     # 页脚
     lines.append(f"\n---\n*文档自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}*")
 

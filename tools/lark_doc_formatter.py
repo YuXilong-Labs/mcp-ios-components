@@ -164,6 +164,7 @@ def _group_apis_by_class(apis: list) -> tuple[dict, list, list, list]:
     """按类/协议聚合 API（从 generate_api_docs 复用逻辑）。"""
     # 延迟导入避免循环
     from tools.generate_api_docs import _group_apis_by_class as _group
+
     return _group(apis)
 
 
@@ -223,15 +224,6 @@ def convert_component_to_blocks(
             blocks.append(_heading_block(2, "函数与其他"))
             for api in standalone:
                 _render_api_blocks(blocks, api, name, ai_results)
-
-    # 调用示例
-    from tools.generate_api_docs import find_usage_examples
-    examples = find_usage_examples(index, name, pods_dir)
-    if examples:
-        blocks.append(_heading_block(2, "调用示例"))
-        for ex in examples:
-            blocks.append(_heading_block(3, f"来自 {ex['source']}"))
-            blocks.append(_code_block("\n".join(ex["lines"])))
 
     # 页脚
     blocks.append(_divider_block())
@@ -379,9 +371,7 @@ def convert_index_to_blocks(components: dict) -> list[dict]:
     """生成组件目录页的 Block 列表。"""
     blocks: list[dict] = []
     blocks.append(_heading_block(1, "iOS 基础库 API 文档"))
-    blocks.append(_quote_block(
-        f"自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}，共 {len(components)} 个组件"
-    ))
+    blocks.append(_quote_block(f"自动生成于 {datetime.now().strftime('%Y-%m-%d %H:%M')}，共 {len(components)} 个组件"))
     blocks.append(_heading_block(2, "组件列表"))
 
     for comp in sorted(components.values(), key=lambda c: c["name"]):
