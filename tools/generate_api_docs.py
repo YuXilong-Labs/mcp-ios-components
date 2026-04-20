@@ -636,6 +636,100 @@ def _indent_blockquote(text: str) -> str:
     return "\n> ".join(text.split("\n"))
 
 
+# ============================================================
+# 批量上传（发现 + 分支过滤 + pull + 生成 + 上传）
+# ============================================================
+
+from mcp_app.integrations.git_client import get_git_repo_branch  # noqa: E402
+
+
+def _bootstrap_module():
+    from mcp_app import bootstrap
+
+    return bootstrap
+
+
+def _discover_base_components(pods_dir: str) -> list[str]:
+    """复用 MCP 启动时的基础组件发现规则，返回排序后的组件名列表。"""
+    return sorted(_bootstrap_module().discover_components(pods_dir))
+
+
+def _process_single_component(
+    *,
+    component: str,
+    comp_path: str,
+    index: dict,
+    pods_dir: str,
+    wiki_node: str,
+    polish: bool,
+    dry_run: bool,
+) -> dict:
+    """处理单个 main 分支基础组件：pull → 生成 → 可选润色 → 上传。
+
+    返回 {"status": "ok"|"failed", "component": ..., ...}。
+    """
+    # 阶段 2 将填充真实逻辑，此处先占位以便先跑通骨架测试。
+    return {"status": "ok", "component": component}
+
+
+def _run_batch_upload(
+    *,
+    pods_dir: str,
+    wiki_node: str,
+    polish: bool,
+    dry_run: bool,
+) -> dict:
+    """批量上传流程：发现基础组件 → 过滤非 main → pull → 生成 → 上传。
+
+    返回 {"ok": [...], "skipped": [...], "failed": [...]}。
+    """
+    summary: dict[str, list[dict]] = {"ok": [], "skipped": [], "failed": []}
+    components = _discover_base_components(pods_dir)
+
+    # 先按分支预过滤，避免 build_index 失败时丢失非 main 组件的 skipped 记录。
+    main_components: list[str] = []
+    for name in components:
+        comp_path = os.path.join(pods_dir, name)
+        branch = get_git_repo_branch(comp_path)
+        if branch == "main":
+            main_components.append(name)
+        else:
+            summary["skipped"].append({"component": name, "reason": f"non-main branch: {branch or 'unknown'}"})
+
+    if not main_components:
+        return summary
+
+    try:
+        index = _bootstrap_module().build_index(pods_dir)
+    except Exception as e:  # noqa: BLE001
+        for name in main_components:
+            summary["failed"].append({"component": name, "reason": f"build_index failed: {e}"})
+        return summary
+
+    for name in main_components:
+        comp_path = os.path.join(pods_dir, name)
+        try:
+            result = _process_single_component(
+                component=name,
+                comp_path=comp_path,
+                index=index,
+                pods_dir=pods_dir,
+                wiki_node=wiki_node,
+                polish=polish,
+                dry_run=dry_run,
+            )
+        except Exception as e:  # noqa: BLE001
+            summary["failed"].append({"component": name, "reason": f"{type(e).__name__}: {e}"})
+            continue
+
+        if result.get("status") == "ok":
+            summary["ok"].append(result)
+        else:
+            summary["failed"].append(result)
+
+    return summary
+
+
 def main():
     parser = argparse.ArgumentParser(description="iOS 基础库 API 文档自动生成")
     parser.add_argument("--index-cache", default="", help="索引缓存 JSON 路径（默认自动检测）")
