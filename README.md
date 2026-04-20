@@ -425,46 +425,26 @@ python tools/generate_api_docs.py \
 | `--parent-node` | 父节点 token（wikcnXxx 格式） | 无 |
 | `--format lark` | 输出飞书 DocX Block JSON（仅本地输出） | `markdown` |
 
-### 批量生成 + 上传基础组件（main 分支）
+### 批量上传飞书知识库
 
-一次性把指定 `--pods-dir` 下所有**基础组件**（发现规则与 MCP 启动一致，过滤掉 `SUPPORT_MIXUP` 非空的业务组件）生成 API Markdown 并上传到同一飞书 wiki 节点。
+批量 main 分支基础组件的生成、Haiku 深度润色与上传，已统一收口到 Skills plugin 命令 `/wk-lark-wiki-batch`：
 
-```bash
-# 默认不润色
-python tools/generate_api_docs.py \
-  --batch-upload \
-  --pods-dir /path/to/Pods \
-  --wiki-node wikcnXXX
-
-# 上传前执行 AI 深度润色
-python tools/generate_api_docs.py \
-  --batch-upload --polish \
-  --pods-dir /path/to/Pods \
-  --wiki-node wikcnXXX
-
-# 预览（不实际调用 lark-cli）
-python tools/generate_api_docs.py \
-  --batch-upload --preview \
-  --pods-dir /path/to/Pods \
-  --wiki-node wikcnXXX
+```text
+/wk-lark-wiki-batch pods_dir=/path/to/Pods wiki_node=wikcnXXXX
+/wk-lark-wiki-batch pods_dir=/path/to/Pods wiki_node=wikcnXXXX preview=true
+/wk-lark-wiki-batch pods_dir=/path/to/Pods wiki_node=wikcnXXXX no_polish=true
+/wk-lark-wiki-batch pods_dir=/path/to/Pods wiki_node=wikcnXXXX component=BTBaseKit
 ```
 
 行为要点：
 
-- 仅处理当前本地分支为 `main` 的组件；非 main 分支的组件记入"跳过"清单，不生成也不上传。
-- 处理前对 main 分支组件执行 `git pull --ff-only`，拉取远端最新代码；pull 失败则标记该组件为失败，不中断整批。
-- 单组件上传失败（lark-cli 报错等）不会中断整批；末尾打印 `成功 / 跳过 / 失败` 三类汇总。
-- 退出码：全部成功 → 0；存在 `failed` → 1；缺 `--pods-dir` 或 `--wiki-node` → 2。
+- 仅处理本地 `main` 分支的基础组件；发现规则与 MCP 服务启动一致（`SUPPORT_MIXUP` 非空的业务组件会被排除）。
+- 处理前对 main 分支组件自动执行 `git pull --ff-only`，拉取远端最新代码；pull 失败记入失败列表，不中断整批。
+- 默认调用本地 Claude Code Haiku 对整份 Markdown 做文档级深度润色（`docs/api/polished/`），`no_polish=true` 关闭。
+- 上传按 update-or-create 逻辑同步到同一 `wiki_node`，避免重复文档。
+- 末尾打印 `成功 / 跳过 / 失败` 三类汇总。
 
-批量模式参数：
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--batch-upload` | 启用批量模式 | 关闭 |
-| `--pods-dir` | Pods 根目录（必填） | 无 |
-| `--wiki-node` | 飞书知识库目标节点 token（必填，所有组件均挂该节点下） | 无 |
-| `--polish` | 启用 AI 深度润色（可选） | 关闭 |
-| `--preview` | 预览，不实际调用 lark-cli | 关闭 |
+> 需先安装 Skills plugin：参见 https://github.com/YuXilong-Labs/Skills 下 `plugins/wk-lark-wiki`。
 
 ### 通用 Markdown 上传工具
 
