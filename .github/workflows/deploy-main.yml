@@ -38,7 +38,7 @@ jobs:
       RUN_TESTS: "1"
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Deploy and verify
         env:
