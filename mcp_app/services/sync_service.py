@@ -37,6 +37,13 @@ def sync_component(name: str, config: dict, target_dir: str) -> dict:
                     result["message"] = checkout.stderr.strip() or "切换分支失败"
                     return result
 
+                before = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=comp_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
                 pull = subprocess.run(
                     ["git", "pull", "--ff-only", "origin", branch],
                     cwd=comp_dir,
@@ -46,8 +53,19 @@ def sync_component(name: str, config: dict, target_dir: str) -> dict:
                 )
                 if pull.returncode == 0:
                     message = pull.stdout.strip() or "Already up to date"
-                    normalized = message.lower().replace("-", " ")
-                    result["status"] = "unchanged" if "already up to date" in normalized else "updated"
+                    after = subprocess.run(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=comp_dir,
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    same_revision = (
+                        before.returncode == 0
+                        and after.returncode == 0
+                        and before.stdout.strip() == after.stdout.strip()
+                    )
+                    result["status"] = "unchanged" if same_revision else "updated"
                     result["message"] = message
                 else:
                     result["status"] = "error"

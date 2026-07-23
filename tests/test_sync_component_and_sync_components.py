@@ -43,7 +43,12 @@ class TestSyncComponentAndSyncComponents(unittest.TestCase):
             with mock.patch.object(
                 s.subprocess,
                 "run",
-                side_effect=[self._cp(0, "", ""), self._cp(0, "Already up to date", "")],
+                side_effect=[
+                    self._cp(0, "", ""),
+                    self._cp(0, "abc\n", ""),
+                    self._cp(0, "已经是最新的。", ""),
+                    self._cp(0, "abc\n", ""),
+                ],
             ):
                 ok = s.sync_component("A", {"repo": "git@x:y.git", "branch": "main"}, d)
             self.assertEqual(ok["status"], "unchanged")
@@ -51,7 +56,12 @@ class TestSyncComponentAndSyncComponents(unittest.TestCase):
             with mock.patch.object(
                 s.subprocess,
                 "run",
-                side_effect=[self._cp(0, "", ""), self._cp(0, "Updating 1..2", "")],
+                side_effect=[
+                    self._cp(0, "", ""),
+                    self._cp(0, "abc\n", ""),
+                    self._cp(0, "Updating 1..2", ""),
+                    self._cp(0, "def\n", ""),
+                ],
             ):
                 updated = s.sync_component("A", {"repo": "git@x:y.git", "branch": "main"}, d)
             self.assertEqual(updated["status"], "updated")
@@ -64,7 +74,7 @@ class TestSyncComponentAndSyncComponents(unittest.TestCase):
             with mock.patch.object(
                 s.subprocess,
                 "run",
-                side_effect=[self._cp(0, "", ""), self._cp(1, "", "pull failed")],
+                side_effect=[self._cp(0, "", ""), self._cp(0, "abc\n", ""), self._cp(1, "", "pull failed")],
             ):
                 bad = s.sync_component("A", {"repo": "git@x:y.git", "branch": "main"}, d)
             self.assertEqual(bad["status"], "error")
