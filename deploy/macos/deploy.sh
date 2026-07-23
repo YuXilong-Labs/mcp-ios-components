@@ -60,7 +60,22 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 DOMAIN="gui/$(id -u)"
 launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
-launchctl bootstrap "$DOMAIN" "$PLIST"
+sleep 2
+
+BOOTSTRAPPED=0
+for ATTEMPT in $(seq 1 10); do
+    if launchctl bootstrap "$DOMAIN" "$PLIST"; then
+        BOOTSTRAPPED=1
+        break
+    fi
+    echo "[deploy] launchd bootstrap is still settling, retry $ATTEMPT/10" >&2
+    sleep 2
+done
+if [[ "$BOOTSTRAPPED" != "1" ]]; then
+    echo "[deploy] launchd bootstrap failed after retries" >&2
+    exit 1
+fi
+
 launchctl enable "$DOMAIN/$LABEL"
 launchctl kickstart -k "$DOMAIN/$LABEL"
 
