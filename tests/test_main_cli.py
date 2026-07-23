@@ -298,8 +298,11 @@ class TestMainCli(unittest.TestCase):
         resp3 = asyncio.run(route_gitlab.endpoint(Req({"X-Gitlab-Token": "ok", "X-Gitlab-Event": "Tag Hook"}, {"object_kind": "tag_push"})))
         self.assertEqual(resp3.status_code, 200)
         # webhook push
-        resp4 = asyncio.run(route_gitlab.endpoint(Req({"X-Gitlab-Token": "ok", "X-Gitlab-Event": "Push Hook"}, {"object_kind": "push", "project": {"name": "p"}, "commits": [1]})))
+        with mock.patch.object(s.threading, "Thread") as webhook_thread:
+            webhook_thread.return_value = mock.Mock(start=mock.Mock())
+            resp4 = asyncio.run(route_gitlab.endpoint(Req({"X-Gitlab-Token": "ok", "X-Gitlab-Event": "Push Hook"}, {"object_kind": "push", "project": {"name": "p"}, "commits": [1]})))
         self.assertEqual(resp4.status_code, 200)
+        self.assertIs(webhook_thread.call_args.kwargs["target"], s.check_for_updates)
 
         # health
         with s.INDEX_LOCK:

@@ -25,17 +25,30 @@ def sync_component(name: str, config: dict, target_dir: str) -> dict:
     try:
         if os.path.exists(comp_dir):
             if os.path.isdir(os.path.join(comp_dir, ".git")):
-                subprocess.run(["git", "checkout", branch], cwd=comp_dir, capture_output=True, timeout=30)
+                checkout = subprocess.run(
+                    ["git", "checkout", branch],
+                    cwd=comp_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if checkout.returncode != 0:
+                    result["status"] = "error"
+                    result["message"] = checkout.stderr.strip() or "切换分支失败"
+                    return result
+
                 pull = subprocess.run(
-                    ["git", "pull", "--ff-only"],
+                    ["git", "pull", "--ff-only", "origin", branch],
                     cwd=comp_dir,
                     capture_output=True,
                     text=True,
                     timeout=120,
                 )
                 if pull.returncode == 0:
-                    result["status"] = "updated"
-                    result["message"] = pull.stdout.strip() or "Already up to date"
+                    message = pull.stdout.strip() or "Already up to date"
+                    normalized = message.lower().replace("-", " ")
+                    result["status"] = "unchanged" if "already up to date" in normalized else "updated"
+                    result["message"] = message
                 else:
                     result["status"] = "error"
                     result["message"] = pull.stderr.strip()
@@ -97,7 +110,13 @@ def sync_components(
         result = sync_component_func(name, comp_config, target_dir)
         results.append(result)
 
-        status_icon = {"cloned": "✅", "updated": "🔄", "skip": "⏭️", "error": "❌"}.get(result["status"], "❓")
+        status_icon = {
+            "cloned": "✅",
+            "updated": "🔄",
+            "unchanged": "➖",
+            "skip": "⏭️",
+            "error": "❌",
+        }.get(result["status"], "❓")
 
         print(f"  {status_icon} {name}: {result['message']}", file=sys.stderr)
 
@@ -155,7 +174,13 @@ def sync_gitlab_group(
         result = sync_component_func(name, {"repo": repo_url, "branch": branch}, target_dir)
         results.append(result)
 
-        status_icon = {"cloned": "✅", "updated": "🔄", "skip": "⏭️", "error": "❌"}.get(result["status"], "❓")
+        status_icon = {
+            "cloned": "✅",
+            "updated": "🔄",
+            "unchanged": "➖",
+            "skip": "⏭️",
+            "error": "❌",
+        }.get(result["status"], "❓")
         print(f"  {status_icon} {name}: {result['message']}", file=sys.stderr)
 
     cloned = sum(1 for r in results if r["status"] == "cloned")

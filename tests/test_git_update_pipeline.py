@@ -110,6 +110,24 @@ class TestGitUpdatePipeline(unittest.TestCase):
                 out3 = s.check_for_updates()
             self.assertFalse(out3["reindexed"])
 
+    def test_check_for_updates_skips_when_sync_is_running(self):
+        s = self._server()
+
+        class BusyLock:
+            def acquire(self, blocking=False):
+                return False
+
+            def release(self):
+                raise AssertionError("busy lock must not be released")
+
+        s.REINDEX_LOCK = BusyLock()
+        with mock.patch.object(s, "discover_git_repos") as discover:
+            result = s.check_for_updates()
+
+        self.assertTrue(result["skipped"])
+        self.assertFalse(result["reindexed"])
+        discover.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

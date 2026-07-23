@@ -87,6 +87,25 @@ class TestSyncInputValidation(unittest.TestCase):
             self.assertIn("索引已更新", out)
             self.assertFalse(os.path.exists(cache_path))
 
+    def test_sync_from_config_updated_component_reindexes(self):
+        s = self._server()
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg = os.path.join(d, "components.yaml")
+            with open(cfg, "w", encoding="utf-8") as f:
+                f.write("components:\\n  A: git@x:a.git\\n")
+
+            with unittest.mock.patch.object(
+                s, "sync_components", return_value=[{"name": "A", "status": "updated", "message": "ok"}]
+            ), unittest.mock.patch.object(s, "build_index", return_value={"A": {}}) as build, unittest.mock.patch.object(
+                s, "discover_components", return_value={"A"}
+            ), unittest.mock.patch.object(s, "compute_hash", return_value="updated-hash"):
+                out = s.sync_from_config(cfg)
+
+            self.assertIn("索引已更新", out)
+            build.assert_called_once_with(s.PODS_DIR)
+            self.assertEqual(s.LAST_HASH, "updated-hash")
+
     def test_sync_from_config_no_results(self):
         s = self._server()
         with tempfile.TemporaryDirectory() as d:

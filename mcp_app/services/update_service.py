@@ -74,56 +74,72 @@ def check_for_updates(
     discover_components: Callable[[str], set],
     compute_hash: Callable[[str, set], str],
     build_index: Callable[[str], dict],
+    reindex_lock=None,
 ) -> dict:
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_entry = {"time": timestamp, "repos": [], "reindexed": False}
+    log_entry = {"time": timestamp, "repos": [], "reindexed": False, "skipped": False}
 
-    repos = discover_git_repos(pods_dir)
-    any_updated = False
+    acquired = False
+    if reindex_lock is not None:
+        acquired = reindex_lock.acquire(blocking=False)
+        if not acquired:
+            log_entry["skipped"] = True
+            watch_log.append(log_entry)
+            if len(watch_log) > watch_log_max:
+                watch_log.pop(0)
+            print("[mcp-ios] ⏭️ 组件同步或索引刷新正在运行，跳过本轮检查", file=sys.stderr)
+            return log_entry
 
-    for repo in repos:
-        result = git_pull_repo(repo)
-        repo_name = os.path.basename(result["path"]) or "root"
-        if result["error"]:
-            print(f"[mcp-ios] ⚠️ {repo_name}: {result['error']}", file=sys.stderr)
-        if result["updated"]:
-            any_updated = True
-        log_entry["repos"].append(
-            {
-                "name": repo_name,
-                "updated": result["updated"],
-                "changes": len(result["changes"]),
-                "error": result["error"],
-            }
-        )
+    try:
+        repos = discover_git_repos(pods_dir)
+        any_updated = False
 
-    if not any_updated:
-        components = discover_components(pods_dir)
-        current_hash = compute_hash(pods_dir, components)
-        if current_hash != last_hash and last_hash:
-            any_updated = True
-            print("[mcp-ios] 🔍 检测到文件系统变更", file=sys.stderr)
+        for repo in repos:
+            result = git_pull_repo(repo)
+            repo_name = os.path.basename(result["path"]) or "root"
+            if result["error"]:
+                print(f"[mcp-ios] ⚠️ {repo_name}: {result['error']}", file=sys.stderr)
+            if result["updated"]:
+                any_updated = True
+            log_entry["repos"].append(
+                {
+                    "name": repo_name,
+                    "updated": result["updated"],
+                    "changes": len(result["changes"]),
+                    "error": result["error"],
+                }
+            )
 
-    if any_updated:
-        cache_path = os.path.join(cache_dir, "index.json")
-        if os.path.exists(cache_path):
-            os.remove(cache_path)
+        if not any_updated:
+            components = discover_components(pods_dir)
+            current_hash = compute_hash(pods_dir, components)
+            if current_hash != last_hash and last_hash:
+                any_updated = True
+                print("[mcp-ios] 🔍 检测到文件系统变更", file=sys.stderr)
 
-        new_index = build_index(pods_dir)
-        set_index(new_index)
-        components = discover_components(pods_dir)
-        set_last_hash(compute_hash(pods_dir, components))
+        if any_updated:
+            cache_path = os.path.join(cache_dir, "index.json")
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
 
-        log_entry["reindexed"] = True
-        print(f"[mcp-ios] ✅ 索引已更新 ({len(new_index)} 个组件)", file=sys.stderr)
-    else:
-        print("[mcp-ios] ℹ️ 无更新", file=sys.stderr)
+            new_index = build_index(pods_dir)
+            set_index(new_index)
+            components = discover_components(pods_dir)
+            set_last_hash(compute_hash(pods_dir, components))
 
-    watch_log.append(log_entry)
-    if len(watch_log) > watch_log_max:
-        watch_log.pop(0)
+            log_entry["reindexed"] = True
+            print(f"[mcp-ios] ✅ 索引已更新 ({len(new_index)} 个组件)", file=sys.stderr)
+        else:
+            print("[mcp-ios] ℹ️ 无更新", file=sys.stderr)
 
-    return log_entry
+        watch_log.append(log_entry)
+        if len(watch_log) > watch_log_max:
+            watch_log.pop(0)
+
+        return log_entry
+    finally:
+        if acquired:
+            reindex_lock.release()
 
 
 def watch_loop(interval: int, *, check_for_updates: Callable[[], dict]) -> None:

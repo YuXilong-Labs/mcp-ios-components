@@ -128,19 +128,89 @@ class LarkCli:
     # 知识库文档操作
     # ------------------------------------------------------------------
 
+    def create_wiki_node(
+        self,
+        space_id: str,
+        parent_node_token: str,
+        title: str,
+    ) -> dict:
+        """兼容旧调用：在知识库空间下创建文档节点。"""
+        body: dict = {
+            "obj_type": "docx",
+            "node_type": "origin",
+            "title": title,
+        }
+        if parent_node_token:
+            body["parent_node_token"] = parent_node_token
+
+        if self.dry_run:
+            return {"node_token": "(dry-run)", "obj_token": "(dry-run)"}
+
+        result = self._run(
+            [
+                "api",
+                "POST",
+                f"/open-apis/wiki/v2/spaces/{space_id}/nodes",
+                "--body",
+                json.dumps(body, ensure_ascii=False),
+            ]
+        )
+        node = result.get("node", {})
+        return {
+            "node_token": node.get("node_token", ""),
+            "obj_token": node.get("obj_token", ""),
+        }
+
+    def update_doc_content(self, document_id: str, markdown: str) -> dict:
+        """兼容旧调用：向已创建的文档写入 Markdown。"""
+        if self.dry_run:
+            return {"document_id": document_id, "status": "dry-run"}
+
+        tmp_path = self._write_temp_markdown(markdown)
+        try:
+            return self._run(
+                [
+                    "docs",
+                    "+create",
+                    "--document-id",
+                    document_id,
+                    "--markdown-file",
+                    tmp_path,
+                    "--as",
+                    "user",
+                ]
+            )
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
     def create_wiki_doc(
         self,
-        wiki_node: str,
-        title: str,
-        markdown: str,
+        wiki_target: str,
+        *args: str,
     ) -> dict:
-        """在知识库节点下创建文档并填充 Markdown 内容。
+        """创建知识库文档，同时兼容单步和旧版两步调用。
 
-        使用 lark-cli docs +create --wiki-node 一步完成。
+        - ``create_wiki_doc(wiki_node, title, markdown)``：当前单步接口。
+        - ``create_wiki_doc(space_id, parent_node, title, markdown)``：兼容旧接口。
         """
+        if len(args) == 3:
+            parent_node_token, title, markdown = args
+            node = self.create_wiki_node(wiki_target, parent_node_token, title)
+            if self.dry_run:
+                return {**node, "content_result": {"status": "dry-run"}}
+            content_result = self.update_doc_content(node["obj_token"], markdown)
+            return {**node, "content_result": content_result}
+
+        if len(args) != 2:
+            raise TypeError("create_wiki_doc expects 3 or 4 positional arguments")
+
+        title, markdown = args
         if self.dry_run:
             preview = markdown[:200] + "..." if len(markdown) > 200 else markdown
-            logger.info("[预览] 创建 wiki 文档: node=%s, title=%s\n%s", wiki_node, title, preview)
+            logger.info("[预览] 创建 wiki 文档: node=%s, title=%s\n%s", wiki_target, title, preview)
             return {"doc_id": "(dry-run)", "doc_url": "(dry-run)"}
 
         tmp_path = self._write_temp_markdown(markdown)
@@ -154,7 +224,7 @@ class LarkCli:
                     "--markdown-file",
                     tmp_path,
                     "--wiki-node",
-                    wiki_node,
+                    wiki_target,
                     "--as",
                     "user",
                 ]
@@ -200,6 +270,9 @@ class LarkCli:
         file_path: str,
         wiki_node: str = "",
         title: str = "",
+        *,
+        space_id: str = "",
+        parent_node_token: str = "",
     ) -> dict:
         """上传本地 .md 文件到飞书。
 
@@ -214,7 +287,8 @@ class LarkCli:
         if not title:
             title = os.path.splitext(os.path.basename(file_path))[0]
 
+        if space_id:
+            return self.create_wiki_doc(space_id, parent_node_token, title, markdown)
         if wiki_node:
             return self.create_wiki_doc(wiki_node, title, markdown)
-        else:
-            return self.create_doc(title, markdown)
+        return self.create_doc(title, markdown)

@@ -40,6 +40,56 @@
 | **Docker Compose** | 单机/小团队 | ⭐ | ⭐⭐⭐⭐⭐ |
 | **Kubernetes** | 大规模/多团队 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
 | **Systemd** | 裸机部署 | ⭐⭐ | ⭐⭐⭐ |
+| **macOS launchd + GitHub Actions** | 当前研发专用 Mac | ⭐⭐ | ⭐⭐⭐⭐⭐ |
+
+## macOS 自动部署（当前生产方案）
+
+MCP 与 lark-ios-bot 是两个独立仓库、两个独立服务。MCP 仅使用标签为
+`ios-components-mcp-deploy` 的 YuXilong-Labs runner，不会复用或修改 BaiTu-iOS 的 Bot runner。
+
+### 固定目录
+
+| 用途 | 路径 |
+|------|------|
+| 服务代码 | `/Users/jenkins/services/mcp-ios-components` |
+| 组件与索引 | `/Users/jenkins/data/mcp-ios-components` |
+| 日志 | `/Users/jenkins/Library/Logs/mcp-ios-components` |
+| launchd | `com.baitu.mcp-ios-components` |
+
+`main` push 和手动 `workflow_dispatch` 都会触发 `.github/workflows/deploy-main.yml`。部署顺序固定为：
+
+1. 在 runner 工作区安装依赖并运行全量 `pytest`。
+2. 测试通过后同步服务代码，保留目标机 `.env`、`.venv` 和组件数据。
+3. 安装或更新 launchd，服务仅监听 `127.0.0.1:8900`。
+4. 通过 MCP 协议执行生产白名单同步，任何组件同步错误都会使 Action 失败。
+5. 调用 `list_components`、`search_component`、`watch_status` 和健康检查完成部署验收。
+
+生产白名单维护在 `deploy/components.production.yaml`。GitLab 凭据只保存在目标机
+`/Users/jenkins/services/mcp-ios-components/.env`，Action 和仓库均不保存凭据。
+
+### 自动更新
+
+服务默认每 60 秒检查各组件当前分支。发现远端提交后使用 `git pull --ff-only` 更新，并在同一临界区内重建
+在线索引；Action 部署后的白名单同步、定时检查和 GitLab Webhook 共用同一把进程锁，不会并发修改组件目录。
+
+### 本机安全访问
+
+生产服务不直接暴露局域网端口。本机使用 SSH 隧道访问：
+
+```bash
+ssh -N -L 18900:127.0.0.1:8900 jenkins@10.0.71.58
+python3 scripts/mcp_http_client.py \
+  --url http://127.0.0.1:18900/mcp \
+  --tool list_components \
+  --contains BTBaseKit
+```
+
+目标机本地健康检查：
+
+```bash
+curl --noproxy '*' http://127.0.0.1:8900/webhook/health
+launchctl print gui/$(id -u)/com.baitu.mcp-ios-components
+```
 
 ---
 

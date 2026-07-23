@@ -16,6 +16,7 @@ iOS CocoaPods 组件库 MCP Server，帮助 AI 编码助手发现和复用已有
 - **HTTP 模式 + API Key 鉴权** — 部署到云端，团队共享
 - **按行读取源码** — 只读需要的行，节省 token
 - **按类聚合视图** — 一览类定义、属性、公开/内部方法
+- **macOS 自动部署** — main 分支通过独立 GitHub Actions runner 部署，launchd 常驻并自动同步组件
 
 ## 架构与目录（轻量分层）
 
@@ -155,19 +156,19 @@ python3 scripts/install_skills.py --target claude --claude-dir ~/.claude/skills
 
 ## 配置文件同步组件
 
-支持根据配置文件自动拉取组件代码：
+支持根据配置文件拉取组件代码：
 
-- 默认行为：正常启动 `python mcp_server.py /path/to/pods` 时会先自动同步，再构建首次索引。
-- 优先级：如果项目根目录存在 `components.yaml`，优先按配置同步基础组件；若配置不存在，则回退为同步 `pods_dir` 下扫描到的、当前位于 `main` 分支的基础 git 仓库。
+- 普通启动：直接使用 `pods_dir` 中已有组件构建索引，不隐式访问远端。
+- 显式同步：启动参数 `--sync` 或 MCP 工具 `sync_from_config` 按配置克隆/更新组件。
 - 同步分支：优先使用 `components.yaml` 中每个组件的 `branch`；未配置时默认 `main`。
-- 降级策略：若启动前同步存在错误，服务不会退出，而是记录告警并继续使用本地已有代码建索引。
+- 生产部署：GitHub Action 在服务启动后调用 `sync_from_config`，同步错误会使部署失败。
 
 ```bash
 # 创建配置文件
 cp components.yaml.example components.yaml
 # 编辑配置...
 
-# 普通启动会自动先同步再扫描
+# 普通启动仅扫描已有组件
 python mcp_server.py /path/to/pods
 
 # 同步组件（克隆/更新）
@@ -198,9 +199,13 @@ access_control:
 
 说明：
 - `--sync` 仍保留显式同步入口，适合希望在启动前手动控制配置路径或只执行同步的场景。
-- 显式传入 `--sync` 或 `--gitlab-group` 时，不会再额外执行一次隐式启动前同步。
-- 如果既没有 `components.yaml`，也没有扫描到可同步的 `main` 分支基础 git 仓库，则会直接进入索引构建。
+- 如果不传 `--sync` 或 `--gitlab-group`，服务不会执行 Git 操作。
 - 也可以通过 MCP 工具 `sync_from_config` 在运行时触发同步。
+
+生产环境使用仓库内的 `deploy/components.production.yaml` 作为基础组件白名单。GitHub Action 部署完成后会通过
+真实 MCP HTTP 协议调用 `sync_from_config`，已有组件拉取到新提交或新组件克隆完成后会立即重建在线索引；常驻
+服务再按 `MCP_WATCH_INTERVAL_S` 周期检查远端更新。macOS 路径、launchd 管理和 SSH 隧道访问方式见
+[`deploy/DEPLOY.md`](deploy/DEPLOY.md)。
 
 ## 访问控制配置（核心组件保护）
 

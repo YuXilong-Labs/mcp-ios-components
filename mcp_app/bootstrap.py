@@ -577,36 +577,43 @@ def sync_from_config(config_path: str = "") -> str:
             "```yaml\ncomponents:\n  BTBaseKit:\n    repo: git@gitlab.com:ios/BTBaseKit.git\n    branch: main\n```"
         )
 
-    results = sync_components(config_path, PODS_DIR)
+    with REINDEX_LOCK:
+        results = sync_components(config_path, PODS_DIR)
 
-    if not results:
-        return "无组件需要同步"
+        if not results:
+            return "无组件需要同步"
 
-    lines = ["📦 组件同步结果:\n"]
-    for r in results:
-        status_icon = {"cloned": "✅", "updated": "🔄", "skip": "⏭️", "error": "❌"}.get(r["status"], "❓")
-        lines.append(f"{status_icon} **{r['name']}**: {r['message']}")
+        lines = ["📦 组件同步结果:\n"]
+        for r in results:
+            status_icon = {
+                "cloned": "✅",
+                "updated": "🔄",
+                "unchanged": "➖",
+                "skip": "⏭️",
+                "error": "❌",
+            }.get(r["status"], "❓")
+            lines.append(f"{status_icon} **{r['name']}**: {r['message']}")
 
-    cloned = sum(1 for r in results if r["status"] == "cloned")
-    updated = sum(1 for r in results if r["status"] == "updated")
-    errors = sum(1 for r in results if r["status"] == "error")
+        cloned = sum(1 for r in results if r["status"] == "cloned")
+        updated = sum(1 for r in results if r["status"] == "updated")
+        errors = sum(1 for r in results if r["status"] == "error")
 
-    lines.append(f"\n📊 统计: {cloned} 克隆, {updated} 更新, {errors} 错误")
+        lines.append(f"\n📊 统计: {cloned} 克隆, {updated} 更新, {errors} 错误")
 
-    if cloned > 0:
-        lines.append("\n🔄 检测到新组件，正在重建索引...")
-        global INDEX, LAST_HASH
-        cache_path = os.path.join(CACHE_DIR, "index.json")
-        if os.path.exists(cache_path):
-            os.remove(cache_path)
-        new_index = build_index(PODS_DIR)
-        with INDEX_LOCK:
-            INDEX = new_index
-        components = discover_components(PODS_DIR)
-        LAST_HASH = compute_hash(PODS_DIR, components)
-        lines.append(f"✅ 索引已更新（{len(INDEX)} 个组件）")
+        if cloned > 0 or updated > 0:
+            lines.append("\n🔄 检测到组件变更，正在重建索引...")
+            global INDEX, LAST_HASH
+            cache_path = os.path.join(CACHE_DIR, "index.json")
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
+            new_index = build_index(PODS_DIR)
+            with INDEX_LOCK:
+                INDEX = new_index
+            components = discover_components(PODS_DIR)
+            LAST_HASH = compute_hash(PODS_DIR, components)
+            lines.append(f"✅ 索引已更新（{len(INDEX)} 个组件）")
 
-    return "\n".join(lines)
+        return "\n".join(lines)
 
 
 @mcp.tool()
@@ -758,6 +765,7 @@ def check_for_updates() -> dict:
         discover_components=discover_components,
         compute_hash=compute_hash,
         build_index=build_index,
+        reindex_lock=REINDEX_LOCK,
     )
 
 
@@ -1122,7 +1130,7 @@ def main():
             commits = len(body.get("commits", []))
             print(f"[mcp-ios] 📦 GitLab push: {project} ({ref}), {commits} commit(s)", file=sys.stderr)
 
-            threading.Thread(target=reindex, daemon=True).start()
+            threading.Thread(target=check_for_updates, daemon=True).start()
 
             return JSONResponse(
                 {

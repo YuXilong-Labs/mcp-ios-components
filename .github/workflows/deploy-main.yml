@@ -1,0 +1,46 @@
+name: Deploy MCP to macOS Mimi
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      sync_components:
+        description: Sync the production component allowlist after deployment
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test, deploy, and verify MCP
+    runs-on:
+      - self-hosted
+      - macOS
+      - ARM64
+      - macOS-mimi
+      - ios-components-mcp-deploy
+    timeout-minutes: 45
+    env:
+      MCP_DEPLOY_ROOT: /Users/jenkins/services/mcp-ios-components
+      MCP_DATA_ROOT: /Users/jenkins/data/mcp-ios-components
+      MCP_LOG_ROOT: /Users/jenkins/Library/Logs/mcp-ios-components
+      MCP_LAUNCHD_LABEL: com.baitu.mcp-ios-components
+      MCP_PORT: "8900"
+      RUN_TESTS: "1"
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Deploy and verify
+        env:
+          SYNC_COMPONENTS: ${{ (github.event_name != 'workflow_dispatch' || inputs.sync_components) && '1' || '0' }}
+        run: bash deploy/macos/deploy.sh "$GITHUB_WORKSPACE"

@@ -1,0 +1,107 @@
+components:
+  BTAlphaVideoPlayer:
+    repo: https://gitlab-code.v.show/ios_component/BTAlphaVideoPlayer.git
+    branch: main
+  BTAnalyticsKit:
+    repo: https://gitlab-code.v.show/ios_component/BTAnalyticsKit.git
+    branch: main
+  BTAntiDebugging:
+    repo: https://gitlab-code.v.show/ios_component/BTAntiDebugging.git
+    branch: main
+  BTApiCenter:
+    repo: https://gitlab-code.v.show/ios_component/BTApiCenter.git
+    branch: main
+  BTAssets:
+    repo: https://gitlab-code.v.show/ios_framework/BTAssets.git
+    branch: main
+  BTBaseKit:
+    repo: https://gitlab-code.v.show/ios_component/btbasekit.git
+    branch: main
+  BTBypass:
+    repo: https://gitlab-code.v.show/ios_component/BTBypass.git
+    branch: main
+  BTBytedEffect:
+    repo: https://gitlab-code.v.show/ios_component/BTBytedEffect.git
+    branch: main
+  BTChameleonFramework:
+    repo: https://gitlab-code.v.show/ios_component/BTChameleonFramework.git
+    branch: main
+  BTComponentsKit:
+    repo: https://gitlab-code.v.show/ios_component/BTComponentsKit.git
+    branch: main
+  BTCrypto:
+    repo: https://gitlab-code.v.show/ios_component/btcrypto.git
+    branch: main
+  BTDContext:
+    repo: https://gitlab-code.v.show/ios_component/BTDContext.git
+    branch: main
+  BTGiftBarrage:
+    repo: https://gitlab-code.v.show/ios_component/BTGiftBarrage.git
+    branch: main
+  BTGlobalConfig:
+    repo: https://gitlab-code.v.show/ios_component/BTGlobalConfig.git
+    branch: main
+  BTIMCore:
+    repo: https://gitlab-code.v.show/ios_component/BTIMCore.git
+    branch: main
+  BTIMService:
+    repo: https://gitlab-code.v.show/ios_component/btimservice.git
+    branch: main
+  BTLiveRoomServices:
+    repo: https://gitlab-code.v.show/ios_component/BTLiveRoomServices.git
+    branch: main
+  BTLiveRoomUIKit:
+    repo: https://gitlab-code.v.show/ios_component/BTLiveRoomUIKit.git
+    branch: main
+  BTLocalization:
+    repo: https://gitlab-code.v.show/ios_component/BTLocalization.git
+    branch: main
+  BTLogger:
+    repo: https://gitlab-code.v.show/ios_component/btlogger.git
+    branch: main
+  BTLoginClient:
+    repo: https://gitlab-code.v.show/ios_component/BTLoginClient.git
+    branch: main
+  BTMQTT:
+    repo: https://gitlab-code.v.show/ios_component/BTMQTT.git
+    branch: main
+  BTMQTTSwift:
+    repo: https://gitlab-code.v.show/ios_component/BTMQTTSwift.git
+    branch: main
+  BTNetwork:
+    repo: https://gitlab-code.v.show/ios_component/btnetwork.git
+    branch: main
+  BTPagerView:
+    repo: https://gitlab-code.v.show/ios_component/BTPagerView.git
+    branch: main
+  BTProtobufMessages:
+    repo: https://gitlab-code.v.show/ios_component/BTProtobufMessages.git
+    branch: main
+  BTRouter:
+    repo: https://gitlab-code.v.show/ios_component/BTRouter.git
+    branch: main
+  BTRTLAdapter:
+    repo: https://gitlab-code.v.show/ios_component/BTRTLAdapter.git
+    branch: main
+  BTStarPetKit:
+    repo: https://gitlab-code.v.show/ios_component/BTStarPetKit.git
+    branch: main
+  BTSwiftBaseKit:
+    repo: https://gitlab-code.v.show/ios_component/BTSwiftBaseKit.git
+    branch: main
+  BTToast:
+    repo: https://gitlab-code.v.show/ios_component/BTToast.git
+    branch: main
+  BTUserStateManager:
+    repo: https://gitlab-code.v.show/ios_component/BTUserStateManager.git
+    branch: main
+  BTVideoCapture:
+    repo: https://gitlab-code.v.show/ios_component/BTVideoCapture.git
+    branch: main
+  BTVideoRecorderKit:
+    repo: https://gitlab-code.v.show/ios_component/BTVideoRecorderKit.git
+    branch: main
+access_control:
+  exclude_from_index:
+    - BTRtcEngine
+  api_only: []
