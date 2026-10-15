@@ -23,6 +23,7 @@ if [[ "$RUN_TESTS" == "1" ]]; then
     "$PYTHON_BIN" -m venv "$TEST_VENV"
     "$TEST_VENV/bin/pip" install -q -r "$SOURCE_ROOT/requirements.txt" pytest
     PYTHONPATH="$SOURCE_ROOT" "$TEST_VENV/bin/python" -m pytest "$SOURCE_ROOT/tests" -q
+    /bin/bash "$SOURCE_ROOT/tests/test_macos_env.sh"
 fi
 
 mkdir -p "$DEPLOY_ROOT" "$DATA_ROOT/pods" "$DATA_ROOT/cache" "$LOG_ROOT"

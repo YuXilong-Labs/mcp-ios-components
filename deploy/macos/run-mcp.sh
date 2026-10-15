@@ -10,9 +10,22 @@ if [[ ! -f "$ENV_FILE" ]]; then
     exit 1
 fi
 
+# launchd 不读取 .zshrc；单独取 Token，避免旧 .env 覆盖宿主机凭据。
+host_gitlab_token="${GITLAB_TOKEN:-${GIT_LAB_TOKEN:-}}"
+if [[ -z "$host_gitlab_token" ]]; then
+    host_gitlab_token="$(/bin/zsh -lic 'printf "%s" "${GITLAB_TOKEN:-${GIT_LAB_TOKEN:-}}" >&3' 3>&1 >/dev/null)" || {
+        echo "[mcp-ios] 无法读取宿主机 GitLab Token，回退到 .env" >&2
+        host_gitlab_token=""
+    }
+fi
+
 set -a
 source "$ENV_FILE"
 set +a
+if [[ -n "$host_gitlab_token" ]]; then
+    export GITLAB_TOKEN="$host_gitlab_token"
+fi
+unset host_gitlab_token
 
 if [[ -z "${GITLAB_URL:-}" && -n "${GIT_LAB_HOST:-}" ]]; then
     if [[ "$GIT_LAB_HOST" == http://* || "$GIT_LAB_HOST" == https://* ]]; then

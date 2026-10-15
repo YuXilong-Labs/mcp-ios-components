@@ -64,8 +64,16 @@ MCP 与 lark-ios-bot 是两个独立仓库、两个独立服务。MCP 仅使用�
 4. 通过 MCP 协议执行生产白名单同步，任何组件同步错误都会使 Action 失败。
 5. 调用 `list_components`、`search_component`、`watch_status` 和健康检查完成部署验收。
 
-生产白名单维护在 `deploy/components.production.yaml`。GitLab 凭据只保存在目标机
-`/Users/jenkins/services/mcp-ios-components/.env`，Action 和仓库均不保存凭据。
+生产白名单维护在 `deploy/components.production.yaml`。GitLab 凭据保存在目标机，Action 和仓库均不保存凭据。
+
+macOS 启动脚本按以下顺序读取非空 GitLab Token：进程继承的环境变量 → 服务用户的交互式登录 zsh
+（`/bin/zsh -lic`，包含 `.zshrc`）→ `/Users/jenkins/services/mcp-ios-components/.env`。
+每个来源均优先 `GITLAB_TOKEN`，其次 `GIT_LAB_TOKEN`；宿主机 Token 不会被 `.env` 中的旧值覆盖。
+只有 Token 使用此优先级，其余服务配置仍从 `.env` 读取。更新宿主机配置后需重启服务；
+仅在另一个终端临时 `export` 不会影响 launchd，需写入服务用户的 zsh 启动配置或提供 launchd 环境变量。
+zsh 启动配置应能非交互完成，不应等待输入。启动脚本只接收 Token，不输出或写入凭据副本。
+
+部署前使用 `bash tests/test_macos_env.sh` 验证 Token 优先级与 `.env` 回退行为。
 
 ### 自动更新
 

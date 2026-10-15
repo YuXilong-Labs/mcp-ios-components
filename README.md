@@ -207,6 +207,14 @@ access_control:
 服务再按 `MCP_WATCH_INTERVAL_S` 周期检查远端更新。macOS 路径、launchd 管理和 SSH 隧道访问方式见
 [`deploy/DEPLOY.md`](deploy/DEPLOY.md)。
 
+macOS 服务的 GitLab Token 优先读取继承的环境变量，其次读取服务用户的交互式登录 zsh 环境，最后回退到
+服务 `.env`。各来源均支持 `GITLAB_TOKEN` 和 `GIT_LAB_TOKEN`（前者优先）。更新后需重启服务；
+仅在其他终端临时 `export` 不会传给 launchd。其他服务配置仍由 `.env` 提供。
+
+On macOS, the service reads its GitLab token from the inherited environment, then the service user's interactive
+login zsh environment, then the service `.env` file. Each source prefers `GITLAB_TOKEN` over `GIT_LAB_TOKEN`.
+Restart after changing the token; an export in another terminal does not reach launchd. Other settings still use `.env`.
+
 ## 访问控制配置（核心组件保护）
 
 在 `components.yaml` 里可配置 `access_control`：
