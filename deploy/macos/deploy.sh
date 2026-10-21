@@ -43,6 +43,9 @@ if [[ ! -f "$DEPLOY_ROOT/.env" ]]; then
     exit 1
 fi
 chmod 600 "$DEPLOY_ROOT/.env"
+set -a
+source "$DEPLOY_ROOT/.env"
+set +a
 install -m 600 "$DEPLOY_ROOT/deploy/components.production.yaml" "$DEPLOY_ROOT/components.yaml"
 chmod 700 "$DEPLOY_ROOT/deploy/macos/run-mcp.sh" "$DEPLOY_ROOT/deploy/macos/git-askpass.sh"
 

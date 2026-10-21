@@ -37,6 +37,17 @@ class TestMacosDeployment(unittest.TestCase):
         self.assertEqual(module.parse_response(encoded, "application/json"), payload)
         self.assertEqual(module.parse_response(b"event: message\ndata: " + encoded + b"\n\n", "text/event-stream"), payload)
 
+    def test_deploy_smoke_check_loads_persistent_client_key(self):
+        deploy_script = os.path.join(ROOT, "deploy", "macos", "deploy.sh")
+        with open(deploy_script, encoding="utf-8") as f:
+            content = f.read()
+
+        source_env = 'source "$DEPLOY_ROOT/.env"'
+        client_command = 'CLIENT=("$DEPLOY_ROOT/.venv/bin/python"'
+        self.assertIn(source_env, content)
+        self.assertIn(client_command, content)
+        self.assertLess(content.index(source_env), content.index(client_command))
+
 
 if __name__ == "__main__":
     unittest.main()
