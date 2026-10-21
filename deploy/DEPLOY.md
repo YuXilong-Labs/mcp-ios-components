@@ -66,6 +66,8 @@ MCP 与 lark-ios-bot 是两个独立仓库、两个独立服务。MCP 仅使用�
 
 生产白名单维护在 `deploy/components.production.yaml`。GitLab 凭据保存在目标机，Action 和仓库均不保存凭据。
 
+白名单包含 `BTHttpClient`（`ios_component/Dora/Common/BTHttpClient`，`main` 分支）；多级 subgroup 仓库使用完整 URL，克隆到组件名目录。部署同步后会加入在线索引，后续提交由定时检查自动拉取；需要即时触发时，可按下文配置 GitLab Push Webhook。
+
 macOS 启动脚本按以下顺序读取非空 GitLab Token：进程继承的环境变量 → 服务用户的交互式登录 zsh
 （`/bin/zsh -lic`，包含 `.zshrc`）→ `/Users/jenkins/services/mcp-ios-components/.env`。
 每个来源均优先 `GITLAB_TOKEN`，其次 `GIT_LAB_TOKEN`；宿主机 Token 不会被 `.env` 中的旧值覆盖。

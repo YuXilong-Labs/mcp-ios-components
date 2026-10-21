@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from urllib.parse import quote, unquote, urlsplit
 
 
 
@@ -19,9 +20,10 @@ def fetch_gitlab_group_repos(group_id: str, gitlab_url: str, gitlab_token: str) 
     repos = []
     page = 1
     per_page = 100
+    group_encoded = quote(str(group_id), safe="")
 
     while True:
-        url = f"{gitlab_url}/api/v4/groups/{group_id}/projects?per_page={per_page}&page={page}&include_subgroups=true"
+        url = f"{gitlab_url.rstrip('/')}/api/v4/groups/{group_encoded}/projects?per_page={per_page}&page={page}&include_subgroups=true"
 
         req = urllib.request.Request(url)
         req.add_header("PRIVATE-TOKEN", gitlab_token)
@@ -61,14 +63,16 @@ def fetch_gitlab_group_repos(group_id: str, gitlab_url: str, gitlab_token: str) 
 def check_repo_is_base_component(repo_url: str, gitlab_url: str, branch: str = "main", gitlab_token: str = "") -> tuple:
     import urllib.request
 
-    if repo_url.startswith("git@"):
-        path = repo_url.split(":")[-1].replace(".git", "")
+    if repo_url.startswith("git@") and "://" not in repo_url:
+        path = repo_url.split(":", 1)[1]
     else:
-        path = "/".join(repo_url.split("/")[-2:]).replace(".git", "")
+        path = unquote(urlsplit(repo_url).path)
 
-    project_encoded = path.replace("/", "%2F")
+    project_encoded = quote(path.strip("/").removesuffix(".git"), safe="")
+    branch_encoded = quote(branch, safe="")
+    gitlab_url = gitlab_url.rstrip("/")
 
-    url = f"{gitlab_url}/api/v4/projects/{project_encoded}/repository/tree?ref={branch}&per_page=100"
+    url = f"{gitlab_url}/api/v4/projects/{project_encoded}/repository/tree?ref={branch_encoded}&per_page=100"
     req = urllib.request.Request(url)
     if gitlab_token:
         req.add_header("PRIVATE-TOKEN", gitlab_token)
@@ -88,8 +92,8 @@ def check_repo_is_base_component(repo_url: str, gitlab_url: str, branch: str = "
     if not podspec_file:
         return (False, None, "无 podspec 文件")
 
-    file_encoded = podspec_file.replace("/", "%2F")
-    url = f"{gitlab_url}/api/v4/projects/{project_encoded}/repository/files/{file_encoded}/raw?ref={branch}"
+    file_encoded = quote(podspec_file, safe="")
+    url = f"{gitlab_url}/api/v4/projects/{project_encoded}/repository/files/{file_encoded}/raw?ref={branch_encoded}"
 
     req = urllib.request.Request(url)
     if gitlab_token:

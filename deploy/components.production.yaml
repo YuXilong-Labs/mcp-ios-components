@@ -41,6 +41,9 @@ components:
   BTGlobalConfig:
     repo: https://gitlab-code.v.show/ios_component/BTGlobalConfig.git
     branch: main
+  BTHttpClient:
+    repo: https://gitlab-code.v.show/ios_component/Dora/Common/BTHttpClient.git
+    branch: main
   BTIMCore:
     repo: https://gitlab-code.v.show/ios_component/BTIMCore.git
     branch: main

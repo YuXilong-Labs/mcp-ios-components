@@ -24,6 +24,11 @@ components:
     repo: https://gitlab.example.com/ios/BTLogger.git
     branch: main
 
+  # 多级 subgroup：保留完整仓库路径
+  BTHttpClient:
+    repo: https://gitlab-code.v.show/ios_component/Dora/Common/BTHttpClient.git
+    branch: main
+
 # 组件访问控制（可选）
 # - exclude_from_index: 从 MCP 索引完全排除（不会出现在 list/search）
 # - api_only: 仅暴露 API 检索能力，禁止 read_source / find_usage_example

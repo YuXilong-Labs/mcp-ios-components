@@ -244,6 +244,8 @@ python mcp_server.py --gitlab-group ios-components \
   /path/to/pods
 ```
 
+`group_id` 支持数字 ID 或完整子组路径（如 `ios_component/Dora/Common`），自动递归发现所有层级的 subgroup。HTTPS、SSH 仓库地址均保留完整命名空间；生产白名单已包含 `ios_component/Dora/Common/BTHttpClient`（`main` 分支）。
+
 ### 基础组件判定规则
 
 Server 会检查每个仓库的 podspec 文件，以下任一条件满足则判定为基础组件：
@@ -595,6 +597,8 @@ Edit `AGENTS.md` to fill in your project-specific component table. Claude Code w
 | `sync_gitlab_group(group_id, ...)` | 🆕 Auto-discover and sync base components from GitLab Group |
 
 ## Sync Components From Config
+
+GitLab group sync accepts a numeric `group_id` or a full subgroup path such as `ios_component/Dora/Common` and recursively includes nested subgroups. HTTPS and SSH repository URLs retain the full namespace. The production allowlist includes `BTHttpClient` on `main`.
 
 On a normal startup like `python mcp_server.py /path/to/pods`, the server will auto-sync before building the first index.
 
