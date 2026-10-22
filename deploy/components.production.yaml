@@ -35,6 +35,9 @@ components:
   BTDContext:
     repo: https://gitlab-code.v.show/ios_component/BTDContext.git
     branch: main
+  BTDoraI18n:
+    repo: https://gitlab-code.v.show/ios_component/Dora/Common/BTDoraI18n.git
+    branch: main
   BTGiftBarrage:
     repo: https://gitlab-code.v.show/ios_component/BTGiftBarrage.git
     branch: main
